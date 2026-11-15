@@ -1,0 +1,59 @@
+purpose:
+  stands_in_for: Claude and OpenAI transport surfaces used by llm_proxy, with synthetic payloads and credentials.
+  unblocks: Local testing of provider routing, saved-key authentication, Office-origin CORS, native authentication headers, payload forwarding, streaming, and rate-limit preservation without paid requests.
+assumptions:
+  - id: native-authentication-headers
+    status: supported
+    claim: OpenAI uses Bearer authorization; Claude uses x-api-key and an anthropic-version request header for its native API.
+    reason: Published provider documentation supports these header contracts; no real credentials were exercised.
+    verification: Provider documentation was reviewed on 2026-11-15 during implementation. The fixture asserts replaced synthetic credentials and Claude API version. Refer to fingerprint initial-implementation.
+    source: https://developers.openai.com/api/reference/overview/ ; https://platform.claude.com/docs/en/api/overview ; postman/mocks/native-provider/default.js
+    updated_at: '2026-11-15'
+  - id: local-proxy-transport
+    status: supported
+    claim: The production Rust proxy preserves the fixture payloads, incremental SSE, HTTP 429, Retry-After, and request IDs for both provider namespaces.
+    reason: The actual Rust core forwarded synthetic requests through both local Postman service members. This establishes caller behavior against the fixtures, not the live providers' full contract.
+    verification: On 2026-11-15 at 11:20 UTC, scripts/verify-simulation.mjs passed nine checks against fixture_proxy and Postman CLI 1.83.1. Request events recorded GET /v1/models plus normal and streaming POSTs with HTTP 200, and a POST with HTTP 429 for each member; six successful and two failed upstream responses. The ninth check rejected missing local authentication before reaching a member. Both streams arrived incrementally and preserved their terminal fixture event. Refer to fingerprint initial-implementation. Revalidated at 12:14 UTC with 15 checks after switching local authentication to saved provider keys; eight member requests covered the same transport cases and seven authentication failures did not reach either member. Refer to fingerprint provider-key-authentication.
+    source: scripts/verify-simulation.mjs; postman/mocks/native-provider/default.js; crates/proxy-core/tests/forwarding.rs
+    updated_at: '2026-11-15'
+  - id: saved-provider-key-authentication
+    status: supported
+    claim: In the local scenarios exercised, each provider namespace accepts its saved API key and rejects missing keys, the other provider's key, the obsolete local token, and conflicting credentials before contacting an upstream.
+    reason: The real Rust core returned the expected client statuses, while simulation events showed only the eight authenticated transport requests reaching provider stand-ins. The existing authentication parser also passed expanded local HTTP fixture checks for duplicate headers and invalid authorization schemes.
+    verification: On 2026-11-15, all 15 simulation checks passed with Postman CLI 1.83.1, followed by a summary of six successful and two rate-limited upstream requests. All 12 release-mode Rust tests passed, including a key-rotation scenario where the old key failed, the replacement key reached the new upstream, a removed provider became unavailable, and a stream authenticated before rotation completed. Proxy and simulation processes were stopped after testing. Refer to fingerprint provider-key-authentication. No live provider or user credential was used.
+    source: crates/proxy-core/src/proxy.rs; crates/proxy-core/tests/forwarding.rs; scripts/verify-simulation.mjs; postman/mocks/native-provider/default.js
+    updated_at: '2026-11-15'
+  - id: office-origin-cors
+    status: supported
+    claim: In the local scenarios exercised, approved Office-origin API calls retain provider authentication, incremental streaming, and readable errors; valid preflights and rejected origins or credentials stay local.
+    reason: The actual Rust core served the expanded checks against local provider members. This establishes HTTP behavior against stand-ins, not browser enforcement or a real Office connection.
+    verification: On 2026-11-15 at 12:53 UTC, scripts/verify-simulation.mjs passed 23 checks with Postman CLI 1.83.1. The final run produced eight member requests covering both protocols, including four Claude requests with Origin; the other 15 checks stayed local. Logs contain 16 member requests across a preliminary run and the passing final run, with 12 HTTP 200 and four HTTP 429 responses. The preliminary run showed Node fetch normalizing Host, so the forged-Host test now uses node:http. Both fixture processes were stopped. All 19 release-mode Rust tests passed, including exact-origin validation, custom and disabled policies, duplicate and lookalike origin rejection, bounded preflights, local and upstream errors, streaming, settings migration, and saved opt-outs. Refer to fingerprint office-origin-cors. HTTPS and real Office/browser validation remain outstanding.
+    source: crates/proxy-core/src/cors.rs; crates/proxy-core/src/proxy.rs; crates/proxy-core/tests/forwarding.rs; src-tauri/src/settings.rs; scripts/verify-simulation.mjs; postman/mocks/native-provider/default.js
+    updated_at: '2026-11-15'
+  - id: complete-live-compatibility
+    status: unknown
+    claim: Every optional API surface and supported client works against the live providers with user-specific permissions.
+    reason: Stand-ins model only narrow transport cases. They cannot establish provider permissions, billing behavior, complete event schemas, or real service availability.
+    verification: No live-provider requests were made. Complete the client compatibility matrix with explicitly configured credentials before release.
+    source: REQUIREMENTS.md; ARCHITECTURE.md; postman/mocks/native-provider/default.js
+    updated_at: '2026-11-15'
+  - id: owner-mock-discovery
+    status: unknown
+    claim: These fixtures match an owning team's published Postman mock.
+    reason: Postman CLI was signed out and the project has no linked workspace; owner workspace and mock searches were skipped. Fixtures were authored locally from reviewed contracts and caller behavior.
+    verification: postman status on 2026-11-15 reported signed out. No login, workspace initialization, upload, or deployment was performed.
+    source: postman/mocks/native-provider/config.yaml; postman/mocks/native-provider/default.js
+    updated_at: '2026-11-15'
+fingerprints:
+  - id: initial-implementation
+    date: '2026-11-15'
+    commit: Uncommitted initial implementation; no HEAD commit exists.
+    cli: Postman CLI 1.83.1
+  - id: provider-key-authentication
+    date: '2026-11-15'
+    commit: Uncommitted implementation with provider-key authentication; no HEAD commit exists.
+    cli: Postman CLI 1.83.1
+  - id: office-origin-cors
+    date: '2026-11-15'
+    commit: Uncommitted implementation with configurable exact Office origins; no HEAD commit exists.
+    cli: Postman CLI 1.83.1

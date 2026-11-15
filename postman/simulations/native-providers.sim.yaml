@@ -1,0 +1,11 @@
+simulation: native-providers
+routing: path
+mocks:
+  - name: openai
+    routeKey: openai
+    origin: api.openai.com
+    path: postman/mocks/native-provider
+  - name: claude
+    routeKey: claude
+    origin: api.anthropic.com
+    path: postman/mocks/native-provider

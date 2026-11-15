@@ -1,0 +1,12 @@
+node_modules
+.toolchains
+dist
+target
+artifacts
+package-lock.json
+Cargo.lock
+REQUIREMENTS.md
+ARCHITECTURE.md
+CODING_STYLE.md
+src-tauri/icons
+src-tauri/gen

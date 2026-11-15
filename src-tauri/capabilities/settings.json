@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings-window",
+  "description": "Settings can receive app status and use the app's typed commands.",
+  "windows": ["settings"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}
