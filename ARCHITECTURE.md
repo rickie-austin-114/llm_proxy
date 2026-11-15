@@ -185,6 +185,8 @@ Automatic startup means **launch at user sign-in after reboot**. A service runni
 
 Use the Tauri autostart plugin through `DesktopIntegration`, with a macOS LaunchAgent and the plugin's Windows per-user integration. Register a background-launch argument internally; users never need to enter it. Read the effective OS registration when displaying the setting, and handle registration failures or OS-disabled startup visibly. [S14]
 
+Configure the plugin's `macos_launcher` builder method only in macOS builds. The shared builder supplies `--background` on every supported platform; Windows uses the plugin's native startup implementation without calling the macOS-only API.
+
 Enable startup by default for new installations. Distinguish a missing settings file from saved settings: on first launch, register the default through the same save/rollback path as the GUI toggle. On subsequent launches, preserve saved preferences and read the effective OS registration without re-enabling startup. Resetting data for uninstall explicitly saves startup as disabled.
 
 | Event | Required behavior |

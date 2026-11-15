@@ -9,6 +9,7 @@ mod settings;
 use std::sync::{atomic::Ordering, Arc};
 
 use tauri::{Manager, RunEvent, WindowEvent};
+#[cfg(target_os = "macos")]
 use tauri_plugin_autostart::MacosLauncher;
 
 use crate::{
@@ -30,18 +31,16 @@ pub fn run() {
     };
     tauri::async_runtime::set(runtime.handle().clone());
     let background = std::env::args().any(|argument| argument == "--background");
+    let autostart = tauri_plugin_autostart::Builder::new().args(["--background"]);
+    #[cfg(target_os = "macos")]
+    let autostart = autostart.macos_launcher(MacosLauncher::LaunchAgent);
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             if !args.iter().any(|argument| argument == "--background") {
                 let _ = desktop::open_settings(app);
             }
         }))
-        .plugin(
-            tauri_plugin_autostart::Builder::new()
-                .macos_launcher(MacosLauncher::LaunchAgent)
-                .args(["--background"])
-                .build(),
-        )
+        .plugin(autostart.build())
         .invoke_handler(tauri::generate_handler![
             commands::get_status,
             commands::save_provider,
