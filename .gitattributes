@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.doc binary
+*.docx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.dmg binary
+*.exe binary

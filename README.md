@@ -10,7 +10,17 @@ A small desktop app that keeps your Claude and OpenAI keys in the OS credential 
 
 ## Install and configure
 
-The app is implemented, but signed public downloads are not published yet. Local and CI packages are development artifacts. Public releases still require signing, macOS notarization, and the platform acceptance checks below.
+See the [Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) for graphical installation, local HTTPS certificate setup, and Claude in PowerPoint instructions with screenshots.
+
+Download the **v0.1.0 preview** installer for your computer:
+
+| Computer                 | Download                                                                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.1.0/LLM-Proxy-0.1.0-macOS-Apple-Silicon.dmg)     |
+| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.1.0/LLM-Proxy-0.1.0-macOS-Intel.dmg)             |
+| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.1.0/LLM-Proxy-0.1.0-Windows-x64-Setup.exe) |
+
+These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.1.0) for limitations and checksums.
 
 The intended graphical installation is:
 
