@@ -1,4 +1,4 @@
-# llm_proxy Requirements
+# ICA proxy Requirements
 
 Status: MVP requirements; implementation present, release acceptance pending
 
@@ -12,6 +12,8 @@ Installation, setup, and everyday operation must be possible without a terminal 
 
 ## 2. User requirements
 
+- Use **ICA proxy** as the app name in the GUI, native menus, and installers.
+- Distribute the application as open-source software under the MIT license, with source and license available in the repository.
 - Support MacBooks with Intel processors and Apple Silicon processors.
 - Support Windows computers.
 - Provide a lightweight application with a graphical setup experience.

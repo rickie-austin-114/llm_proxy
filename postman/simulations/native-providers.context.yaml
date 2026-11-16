@@ -1,5 +1,5 @@
 purpose:
-  stands_in_for: Claude and OpenAI transport surfaces used by llm_proxy, with synthetic payloads and credentials.
+  stands_in_for: Claude and OpenAI transport surfaces used by ICA proxy, with synthetic payloads and credentials.
   unblocks: Local testing of provider routing, saved-key authentication, Office-origin CORS, native authentication headers, payload forwarding, streaming, and rate-limit preservation without paid requests.
 assumptions:
   - id: native-authentication-headers

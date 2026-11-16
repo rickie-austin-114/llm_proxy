@@ -207,7 +207,7 @@ fn generate() -> Result<(PublicIdentity, Zeroizing<Vec<u8>>), AppError> {
     ca.distinguished_name.push(
         DnType::CommonName,
         format!(
-            "llm_proxy Local HTTPS {}",
+            "ICA proxy Local HTTPS {}",
             &fingerprint(ca_key.public_key_raw())[..12]
         ),
     );

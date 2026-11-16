@@ -11,7 +11,7 @@ pub fn install_app_menu(app: &AppHandle) -> Result<(), Box<dyn std::error::Error
 
     let application = Submenu::with_items(
         app,
-        "llm_proxy",
+        "ICA proxy",
         true,
         &[
             &MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?,
@@ -19,7 +19,7 @@ pub fn install_app_menu(app: &AppHandle) -> Result<(), Box<dyn std::error::Error
             &PredefinedMenuItem::hide(app, None)?,
             &PredefinedMenuItem::hide_others(app, None)?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "quit", "Quit llm_proxy", true, Some("CmdOrCtrl+Q"))?,
+            &MenuItem::with_id(app, "quit", "Quit ICA proxy", true, Some("CmdOrCtrl+Q"))?,
         ],
     )?;
     let edit = Submenu::with_items(
@@ -58,7 +58,7 @@ pub fn open_settings(app: &AppHandle) -> Result<(), AppError> {
         return Ok(());
     }
     WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("index.html".into()))
-        .title("llm_proxy")
+        .title("ICA proxy")
         .inner_size(960.0, 840.0)
         .min_inner_size(640.0, 600.0)
         .on_navigation(|url| {

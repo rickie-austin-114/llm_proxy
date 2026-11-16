@@ -159,7 +159,7 @@
   }
 </script>
 
-<svelte:head><title>llm_proxy · Connection settings</title></svelte:head>
+<svelte:head><title>ICA proxy · Connection settings</title></svelte:head>
 
 <div class="app-shell">
   <header class="app-header">
@@ -175,7 +175,7 @@
         />
       </svg>
       <div>
-        <span class="brand-name">llm_proxy</span><span class="brand-description"
+        <span class="brand-name">ICA proxy</span><span class="brand-description"
           >Claude & OpenAI, on localhost</span
         >
       </div>
@@ -314,10 +314,10 @@
             {status.backgroundStartup === 'enabled'
               ? 'The proxy starts after you sign in. This settings app stays closed.'
               : status.backgroundStartup === 'approval_required'
-                ? 'Allow llm_proxy under Login Items & Extensions in macOS System Settings.'
+                ? 'Allow ICA proxy under Login Items & Extensions in macOS System Settings.'
                 : status.backgroundStartup === 'disabled'
                   ? status.platform === 'windows'
-                    ? 'Background startup is disabled. Check the llm_proxy task in Windows Task Scheduler, or save a provider after resetting to set up again.'
+                    ? 'Background startup is disabled. Check the task whose name starts with llm_proxy- in Windows Task Scheduler, or save a provider after resetting to set up again.'
                     : 'Background startup is disabled. Check macOS Login Items & Extensions, or save a provider after resetting to set up again.'
                   : status.backgroundStartup === 'development'
                     ? 'Development mode: automatic startup is not registered.'
@@ -344,7 +344,7 @@
         </div>
       </div>
       <p class="field-hint">
-        Closing or quitting settings leaves the proxy running. Open llm_proxy from Applications or
+        Closing or quitting settings leaves the proxy running. Open ICA proxy from Applications or
         the Start menu to return here. Use Stop proxy to stop requests until the worker starts again
         after sign-in.
       </p>

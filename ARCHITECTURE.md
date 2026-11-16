@@ -1,4 +1,4 @@
-# llm_proxy Architecture
+# ICA proxy Architecture
 
 Status: MVP implemented; cross-platform release and memory gates pending
 
@@ -66,6 +66,8 @@ flowchart LR
 ```
 
 `llm-proxy` is the settings executable. `llm-proxy-worker` owns all proxy listeners, settings writes, provider clients, native credential operations, public HTTPS metadata, trust operations, and the bounded diagnostics ring. `crates/proxy-service` contains the independent controller and worker IPC; `crates/proxy-core` remains the transport/routing library. Tauri links the shared DTO/client code but does not construct a second controller or credential store.
+
+The displayed app name is **ICA proxy**, set through Tauri product metadata and the settings/window/menu labels. The MIT license is included as a bundle resource and in the source repository. Keep `app.llmproxy.desktop`, credential service/account names, executable filenames, private IPC addresses, LaunchAgent labels, and scheduled-task names stable across this rename so existing settings, secrets, and background registration can be reused. Newly generated HTTPS certificates use the ICA proxy name; saved certificate identities are retained until explicit renewal or removal. Published releases keep their original asset names and versioned documentation.
 
 | Component | Owns |
 | --- | --- |

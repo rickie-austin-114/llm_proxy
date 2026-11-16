@@ -2278,7 +2278,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "llm-proxy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "arboard",
  "block2",
@@ -3113,7 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "proxy-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-stream",
  "axum",
@@ -3138,7 +3138,7 @@ dependencies = [
 
 [[package]]
 name = "proxy-service"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "apple-native-keyring-store",
  "dirs 6.0.0",

@@ -90,7 +90,7 @@ pub fn run() {
         Ok(app) => app,
         Err(_) => {
             eprintln!(
-                "llm_proxy settings could not initialize. Check installation and OS permissions."
+                "ICA proxy settings could not initialize. Check installation and OS permissions."
             );
             return;
         }

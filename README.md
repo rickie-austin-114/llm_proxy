@@ -1,6 +1,6 @@
-# llm_proxy
+# ICA proxy
 
-A small desktop app that keeps your Claude and OpenAI keys in the OS credential store and forwards native API requests through localhost. Built with Tauri 2, Rust, and Svelte.
+**ICA proxy** is a lightweight, open-source desktop app that keeps your Claude and OpenAI keys in the OS credential store and forwards native API requests through localhost. Built with Tauri 2, Rust, and Svelte. Licensed under the [MIT License](LICENSE); you can inspect, modify, and redistribute the source under its terms.
 
 ## Project documents
 
@@ -10,35 +10,37 @@ A small desktop app that keeps your Claude and OpenAI keys in the OS credential 
 
 ## Install and configure
 
-Follow the installation and HTTPS steps below for v0.2.0. The [older Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) includes PowerPoint screenshots, but shows the previous two-button HTTPS setup and tray lifecycle.
+Follow the installation and HTTPS steps below for v0.2.1. The [older Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) includes PowerPoint screenshots, but shows the previous two-button HTTPS setup and tray lifecycle.
 
-Download the **v0.2.0 preview** installer for your computer:
+Download the **ICA proxy v0.2.1 preview** installer for your computer:
 
 | Computer                 | Download                                                                                                                            |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.0/LLM-Proxy-0.2.0-macOS-Apple-Silicon.dmg)     |
-| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.0/LLM-Proxy-0.2.0-macOS-Intel.dmg)             |
-| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.0/LLM-Proxy-0.2.0-Windows-x64-Setup.exe) |
+| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.1/ICA-Proxy-0.2.1-macOS-Apple-Silicon.dmg)     |
+| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.1/ICA-Proxy-0.2.1-macOS-Intel.dmg)             |
+| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.1/ICA-Proxy-0.2.1-Windows-x64-Setup.exe) |
 
-These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.2.0) for limitations and checksums.
+These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.2.1) for limitations and checksums.
 
 The intended graphical installation is:
 
-- **macOS 13 or newer:** open the disk image for your processor, then drag **llm_proxy** into Applications. Separate native builds cover Intel and Apple Silicon.
+- **macOS 13 or newer:** open the disk image for your processor, then drag **ICA proxy** into Applications. Separate native builds cover Intel and Apple Silicon.
 - **Windows 11 x64:** run the setup executable. It installs for the current user and bootstraps WebView2 if missing; the runtime download requires internet access.
 
 End users do not need Node.js, Rust, a package manager, or a terminal.
 
-1. Open **llm_proxy** and enter a Claude or OpenAI API key. Both providers can be configured together.
+1. Open **ICA proxy** and enter a Claude or OpenAI API key. Both providers can be configured together.
 2. Keep the default upstream URL or enter your compatible gateway's base URL. OpenAI URLs include the API prefix (normally `/v1`); Claude URLs use the service root.
 3. Optionally select **Test connection**. This lists models; it does not generate tokens or save your input.
 4. Select **Save settings**, then **Start proxy**.
 5. Copy the appropriate local base URL into your client. Use the **same API key** you saved for that provider in the app.
 6. Background startup is configured automatically. After reboot/sign-in, only the proxy worker starts; the settings app stays closed. There is no Start at login checkbox.
 
-Close or quit settings to leave the proxy and active requests running. Open **llm_proxy** from Applications or the Windows Start menu to return to settings. **Stop proxy** stops requests until you select Start or the worker starts again after sign-in. Background startup status appears under **Background & startup**. macOS may require approval in System Settings → General → Login Items & Extensions; subsequent OS-disabled worker registration is respected.
+Close or quit settings to leave the proxy and active requests running. Open **ICA proxy** from Applications or the Windows Start menu to return to settings. **Stop proxy** stops requests until you select Start or the worker starts again after sign-in. Background startup status appears under **Background & startup**. macOS may require approval in System Settings → General → Login Items & Extensions; subsequent OS-disabled worker registration is respected.
 
-For this upgrade, quit the previous app once before replacing it, so its old single-instance process cannot capture the new settings launch. The new worker is bundled into graphical installers. The old GUI startup entry is migrated automatically. The v0.2.0 installers include the worker split, Keychain guidance, and combined HTTPS setup button. The existing Word guide describes the previous version.
+When upgrading from llm_proxy to ICA proxy, quit the old app first. On Mac, install ICA proxy in Applications and remove the old llm_proxy app after confirming the new app works. On Windows, uninstall llm_proxy through Installed apps before installing ICA proxy, because the new product name uses a different installation directory. To keep your provider keys, settings, and HTTPS identity, skip **Reset data / prepare to uninstall** during this rename upgrade.
+
+The new worker is bundled into graphical installers. The old GUI startup entry is migrated automatically. The installers include the background worker, Keychain guidance, and combined HTTPS setup button. The existing Word guide describes the previous version.
 
 ### Remember Keychain access on macOS
 
@@ -82,7 +84,7 @@ The OpenAI HTTPS URL is `https://localhost:8788/openai/v1`. The certificate also
 
 The certificate lasts one year; its expiration and root fingerprint are shown in settings. **Renew HTTPS and trust certificate** confirms replacement while stopped, removes old trust, and requests trust for the replacement in the same action. Restart Office afterward. **Remove HTTPS** removes this identity's trust, public metadata, and private key. **Check certificate trust** refreshes status after an OS trust change. Certificate setup is opt-in and saved for later starts, including login startup; trust is never silently installed in the background. No private certificate key is stored in the repository or shared with the developer Rust bundle.
 
-The v0.2.0 installers include the combined setup button. The older Word guide still shows separate setup and trust buttons.
+The installers include the combined setup button. The older Word guide still shows separate setup and trust buttons.
 
 Local tests verify certificate validation, HTTP/2, CORS, authentication, incremental HTTPS streams, and shutdown. Native trust prompts and an end-to-end Office connection still need platform acceptance testing; certificate trust, local-network permissions, and enterprise policies can vary by Office/OS installation.
 

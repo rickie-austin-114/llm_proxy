@@ -1,4 +1,4 @@
-# llm_proxy Coding Style
+# ICA proxy Coding Style
 
 Status: Project conventions for implementation
 

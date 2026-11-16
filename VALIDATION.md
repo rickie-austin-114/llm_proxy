@@ -4,6 +4,10 @@ Updated: November 16, 2026. This file separates completed local checks from rele
 
 ## Completed locally
 
+- v0.2.1 release preparation: updated npm, Cargo, and Tauri versions to 0.2.1, refreshed lockfiles, and added ICA proxy installer links and upgrade/release notes. The branding checks below cover the renamed app; final cross-platform checks and release artifacts are recorded in GitHub Actions and the v0.2.1 release.
+
+- November 16, branding: renamed the displayed product, window/menu labels, installer metadata, startup description, and newly generated certificate labels to **ICA proxy**. Added the MIT license to the repository and packaged resources, and updated the README and project documents. Existing application/credential/IPC/startup identifiers remain stable. Frontend checks, ESLint, both frontend tests, Prettier, Rust formatting, strict release/workspace/all-target Clippy, and all 34 release-mode Rust tests pass. Built `ICA proxy.app` on Apple Silicon and verified its display/bundle names, MIT resource, worker/LaunchAgent, and strict/deep ad-hoc signature. No installed app was launched or changed; published v0.2.0 assets retain their original branding.
+
 - v0.2.0 release preparation: refreshed package versions and lockfiles, added current installation/upgrade notes, and made the graphical uninstall helper report startup-removal failures and wait for worker exit before returning success. Frontend checks, formatting, and strict release/workspace/all-target Clippy pass after these changes. Cross-platform CI and installer assets are recorded on the GitHub release.
 
 - November 16: split the proxy into `llm-proxy-worker` (`crates/proxy-service`, no Tauri/webview dependency) and an on-demand settings process. Removed the Start at login checkbox and resident tray, added per-user SMAppService LaunchAgent / Windows Task Scheduler registration, private user-restricted socket/pipe IPC, executable identity checks and managed/manual worker handoff, legacy GUI startup migration, and worker stop/uninstall hooks. Close/Quit settings now exits the GUI while preserving the worker. Reset cleans secrets/trust before unregistering and leaves a disabled enrollment marker; normal provider saves preserve an existing registration.
@@ -43,6 +47,8 @@ Updated: November 16, 2026. This file separates completed local checks from rele
 The local host runs macOS 27.2 on Apple Silicon. Rust is 1.100.0, Node is 22.18.0, and npm is 10.9.3. The toolchain and lockfiles are pinned project inputs. Native store and desktop compilation were checked on this Mac; Intel Mac and Windows jobs are configured in CI and have not been executed in this session.
 
 ## Remaining verification
+
+- Verify the ICA proxy name and bundled license in Intel Mac and Windows packages. Exercise upgrades from llm_proxy with the changed application/install-directory name, including Windows uninstall/reinstall while retaining saved data and macOS worker registration after removing the old app copy.
 
 - Worker split: exercise SMAppService registration/approval/denial, migration of the old login entry, sign-out/reboot, GUI close and explicit Quit during active streams, worker crash recovery, new-worker Keychain Always Allow approval, reset/re-enrollment, and uninstall on clean macOS accounts. Run equivalent Windows Task Scheduler, named-pipe DACL/peer checks, file-replacement hooks, and graphical upgrade/uninstall tests. Intel/Windows native compilation and execution of this revision remain unverified locally. Do not change a real user's keys/trust/startup settings as a substitute for clean-account tests.
 - Measure the worker and all app-associated processes under the architecture's full memory workload after settings closes. There is **no new measured RAM result** establishing either below 200 MB or the ideal below 100 MB. A successful package build and a webview-free worker dependency tree do not satisfy this gate.
