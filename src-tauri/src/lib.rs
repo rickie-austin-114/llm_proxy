@@ -23,10 +23,14 @@ pub fn run() {
         }
     };
     if std::env::args().any(|argument| argument == "--uninstall") {
-        let _ = proxy_service::config_dir().and_then(|directory| startup::disable(&directory));
-        let _ = runtime.block_on(proxy_service::ipc::call(
-            proxy_service::ipc::Request::Shutdown,
-        ));
+        let result = proxy_service::config_dir()
+            .and_then(|directory| startup::disable(&directory))
+            .and_then(|()| runtime.block_on(proxy_service::stop_worker()));
+        runtime.shutdown_timeout(std::time::Duration::from_secs(1));
+        if result.is_err() {
+            eprintln!("The background proxy could not be removed. Retry uninstalling.");
+            std::process::exit(1);
+        }
         return;
     }
     tauri::async_runtime::set(runtime.handle().clone());
