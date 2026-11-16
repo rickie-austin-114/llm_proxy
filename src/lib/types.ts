@@ -24,6 +24,7 @@ export interface Diagnostic {
 }
 
 export interface AppStatus {
+  platform: string;
   phase: ProxyPhase;
   localPort: number;
   httpsPort: number;
@@ -34,7 +35,7 @@ export interface AppStatus {
     expiresAt: number | null;
     fingerprint: string | null;
   };
-  startAtLogin: boolean;
+  backgroundStartup: string;
   browserOrigins: string[];
   providers: ProviderStatus[];
   lastError: AppError | null;

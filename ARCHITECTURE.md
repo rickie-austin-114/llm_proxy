@@ -2,7 +2,7 @@
 
 Status: MVP implemented; cross-platform release and memory gates pending
 
-Date: November 15, 2026
+Date: November 16, 2026
 
 Requirements: [REQUIREMENTS.md](REQUIREMENTS.md)
 
@@ -10,9 +10,9 @@ Requirements: [REQUIREMENTS.md](REQUIREMENTS.md)
 
 Use **Tauri 2 + Rust for the desktop application and proxy, with Svelte + TypeScript for the settings GUI**.
 
-Tauri uses the operating system's webview: WKWebView on macOS and WebView2 on Windows. Its Rust core and webview processes have separate responsibilities, and it supports native tray menus. This fits an application whose proxy runs continuously while its settings window opens occasionally. [S1, S2]
+Tauri uses the operating system's webview: WKWebView on macOS and WebView2 on Windows. It hosts the settings application only. A separate **headless Rust worker** runs continuously; it has no Tauri, webview, Dock icon, tray icon, or frontend runtime dependency. [S1, S3]
 
-The key design decision is to **create the settings webview only when needed and destroy it when the window closes**. Automatic startup should create the Rust host, tray/menu bar control, and proxy without creating a settings window. Tauri supports deferred window creation and explicit window destruction. [S3, S4]
+Closing or quitting settings exits its process. The proxy keeps running in the independently launched worker. Automatic sign-in startup launches only that worker, so no native reopen event can create settings during a normal worker startup.
 
 This is a recommendation based on the framework's architecture, not a measured RAM guarantee. Release builds must demonstrate background usage strictly below 200 MB across all app processes, ideally below 100 MB, on every supported architecture before the stack is accepted for release.
 
@@ -30,18 +30,18 @@ The implementation uses stable Tauri 2 with compatible plugins and committed Car
 
 | Layer | Proposed technology | Responsibility |
 | --- | --- | --- |
-| Desktop host | Tauri 2 / Rust | Application lifecycle, native menus, window creation, GUI commands. |
-| Settings GUI | Svelte + TypeScript + Vite | Provider setup, connection tests, status, startup settings, diagnostics. |
+| Settings host | Tauri 2 / Rust | Settings lifecycle, native menus, GUI commands, worker registration and launch. |
+| Settings GUI | Svelte + TypeScript + Vite | Provider setup, connection tests, status, background startup status, diagnostics. |
 | Local HTTP/HTTPS server | Axum routing + Hyper transport; Tokio Rustls for inbound TLS | Shared routing/authentication, bounded HTTP/1.1 and HTTP/2 connections, incremental streams. |
 | Local certificate generation | rcgen with Ring | Unique per-installation P-256 CA/server identity; loopback-only SANs and CA name constraints. |
 | Certificate trust | Platform adapter + Rustls/native root verification | Explicit current-user trust, status checks, renewal/removal through the GUI. |
-| Async execution | Tauri's Tokio runtime | Network tasks, cancellation, bounded background work. |
+| Async execution | Independent Tokio runtime in each executable, two networking threads each | Worker networking/cancellation; separate GUI IPC. |
 | Upstream HTTP client | Reqwest with Rustls | TLS, connection reuse, request and response streaming. |
 | Credential storage | `keyring-core` with native platform stores | macOS Keychain and Windows Credential Manager. |
 | Non-secret settings | Serde + versioned JSON files | Endpoints, HTTP/HTTPS ports, preferences; public certificate chain and expiration stored separately. |
 | Operational diagnostics | Bounded, sanitized in-memory ring | Up to 64 lifecycle and error events; no request content or disk logs. |
-| Startup integration | Tauri autostart plugin behind a Rust interface | User-controlled launch at login. |
-| Instance control | Tauri single-instance plugin | One host per user session; reopen settings in the existing host. |
+| Startup integration | macOS SMAppService LaunchAgent; Windows Task Scheduler logon task | Automatically register the worker once per user; respect subsequent OS opt-outs. |
+| Instance control | Tauri single-instance plugin for settings; OS lock/first named-pipe instance for worker | One settings instance and one worker per user. |
 
 Svelte compiles UI components into JavaScript; use a small static frontend without a separate production web server. Axum is built around Tokio/Hyper and Tower middleware. Reqwest exposes streamed response bodies and configurable network policies. [S7-S9]
 
@@ -53,38 +53,43 @@ Node.js and npm are build tools for developers and CI. End users install a packa
 
 ```mermaid
 flowchart LR
-    UI[Settings webview<br/>Created on demand] <-->|Tauri IPC| Host[Rust application host]
-    Tray[Native tray / menu bar] <--> Host
-    Host <--> Config[Non-secret settings]
-    Host <--> Secrets[OS credential store]
-    Host --> Proxy[Axum loopback proxy]
-    Client[User's API client] -->|Saved provider API key| Proxy
-    Office[Claude for Office] -->|HTTPS + provider API key| Proxy
-    Host <--> Certificates[Public certificate metadata]
-    Host --> Trust[Current-user OS certificate trust]
-    Proxy --> HTTP[Reqwest streaming client]
-    HTTP -->|HTTPS + provider key| Upstream[Configured Claude / OpenAI endpoint]
+    UI[Settings webview] <-->|Tauri IPC| GUI[Settings executable]
+    OS[Per-user OS sign-in registration] --> Worker[Headless Rust worker]
+    GUI <-->|Private user-restricted IPC| Worker
+    Worker <--> Config[Non-secret settings]
+    Worker <--> Secrets[OS credential store]
+    Worker <--> Certificates[Public certificate metadata]
+    Worker --> Trust[Current-user certificate trust]
+    Worker --> Proxy[Loopback HTTP / HTTPS proxy]
+    Office[Claude for Office / API clients] -->|Provider API key| Proxy
+    Proxy -->|Streaming HTTPS| Upstream[Configured Claude / OpenAI endpoint]
 ```
 
-One application-owned Rust host runs the proxy, state management, and native desktop integration. The OS webview may create additional processes while settings are open. The proxy must operate independently of the settings window and its JavaScript lifecycle. [S1]
+`llm-proxy` is the settings executable. `llm-proxy-worker` owns all proxy listeners, settings writes, provider clients, native credential operations, public HTTPS metadata, trust operations, and the bounded diagnostics ring. `crates/proxy-service` contains the independent controller and worker IPC; `crates/proxy-core` remains the transport/routing library. Tauri links the shared DTO/client code but does not construct a second controller or credential store.
 
 | Component | Owns |
 | --- | --- |
-| `AppController` | Start/stop sequencing, tray actions, shutdown, and authoritative application state. |
-| `RunningProxy` | HTTP/HTTPS loopback listeners, bounded connections, authentication, shared request limits, routing, cancellation. |
-| `ProviderRegistry` | Immutable configuration snapshots and per-provider HTTP clients. |
-| `CredentialStore` | Store/read/delete provider keys and the HTTPS server private key; serialize native credential operations. |
-| `CertificateStore` | Generate/validate a device identity, persist public certificates atomically, load the private key for serving, expose non-secret trust/expiration status. |
-| Certificate platform adapter | Install/remove only this identity's public root in current-user trust; handle OS authorization failures. |
-| `SettingsStore` | Validated configuration, schema migration, atomic writes. |
-| `DesktopIntegration` | Startup registration, single-instance activation, window and tray lifecycle. |
-| `Diagnostics` | Bounded logs and sanitized counters; no request/response content. |
-
-Keep the proxy logic in a Rust library independent of Tauri. This allows integration tests and a different desktop shell if resource measurements require one.
+| Worker `AppController` | Serialized settings/lifecycle operations and authoritative proxy state. |
+| Settings `AppController` | Typed IPC adapter, startup status, connection recovery, sanitized status events. |
+| `RunningProxy` | Loopback listeners, bounded connections, API-key auth, routing, streams, cancellation. |
+| `CredentialStore` | Native provider keys and HTTPS key; serialized blocking operations. |
+| `CertificateStore` / platform adapter | Identity creation, validation, current-user trust, renewal and removal. |
+| `SettingsStore` | Validated JSON migration and atomic persistence. |
+| `startup` | OS worker registration, migration of the old GUI login item, upgrade fingerprint and uninstall. |
+| `transport` / `ipc` | User-restricted management channel, singleton enforcement, versioned bounded messages. |
 
 ## 4. GUI communication and state
 
-The GUI calls a narrow set of typed Tauri commands, such as `get_status`, `save_provider`, `delete_provider`, `test_connection`, `start_proxy`, `stop_proxy`, and `set_start_at_login`. Rust validates all inputs and emits status-change events. Do not poll continuously or publish prompts and streamed response chunks into the UI.
+The GUI calls a narrow set of typed Tauri commands, such as `get_status`, `save_provider`, `delete_provider`, `test_connection`, `start_proxy`, `stop_proxy`. The settings host forwards typed requests to the worker; the worker validates inputs and emits status-change events. Do not poll continuously or publish prompts and streamed response chunks into the UI.
+
+The worker management channel is separate from HTTP/HTTPS API listeners:
+
+- macOS uses a Unix socket in `/tmp/llmproxy-<uid>/`: owner-only directory (0700), socket and lock file (0600), ownership/symlink checks, and same-UID peer validation. An OS file lock guards stale-socket cleanup and singleton ownership.
+- Windows uses `\\.\pipe\llm-proxy-<user-SID>`, a protected DACL granting only that user, non-inherited handles, rejection of remote clients, and first-instance enforcement. Clients verify the server process's user SID before sending credentials.
+- Messages use protocol version 1, a four-byte length prefix, and bounded JSON (128 KiB). At most eight management connections exist, including subscriptions. Request headers/bodies and writes have finite deadlines. Calls awaiting deliberate native approval allow up to five minutes; mutating calls are never replayed after a write.
+- A worker watch channel coalesces status changes; one persistent GUI subscription carries only status snapshots. The GUI serializes multi-command save/start/reset and registration sequences; the worker separately serializes authoritative settings/lifecycle operations. Disconnect releases its slot immediately, even while idle. GUI recovery uses exponential backoff capped at 32 seconds, only while settings is open. The worker does no periodic GUI polling.
+- Serialized frame buffers and owned request/reply key strings are zeroized where practical. No management port, browser management endpoint, generated local token, or secrets in process arguments are introduced. Same-user native applications are within this channel's trust boundary; it does not isolate mutually hostile programs in one OS account.
+- The settings host checks the running worker's startup-time executable fingerprint against the installed worker. A mismatched worker is stopped and its exit awaited before new secrets are sent. The identity also distinguishes OS-managed and manually launched workers; after OS startup becomes enabled, reconnecting settings hands a manual worker over to the OS-managed job instead of leaving duplicate launch attempts. Windows installers also wait for worker exit before replacing locked files.
 
 HTTPS adds `set_https_port`, `setup_https`, `trust_https_certificate`, `check_https_trust`, and `remove_https`. Only the settings window is authorized. IPC carries no certificate private key and accepts no shell commands, certificate paths, trust-store names, or arbitrary certificates. Status includes whether HTTPS is enabled, its port, certificate configuration/trust, expiration, SHA-256 root fingerprint, and each provider's optional HTTPS base URL. Certificate setup/renewal, removal, and port changes require a stopped proxy. Trust changes are deliberate GUI actions with confirmation; the native OS may show its own authorization dialog. No new shell or filesystem permission is exposed to the webview.
 
@@ -115,9 +120,9 @@ Anthropic's Office gateway configuration calls for an HTTPS base URL and CORS fo
 
 1. **Set up HTTPS:** while stopped, generate a unique P-256 root and server key. The root has a path-length limit of zero and name constraints for `localhost`, `127.0.0.1/32`, and `::1/128`. The leaf has exactly those three SANs, digital-signature key usage, and server-authentication extended key usage. Backdate validity five minutes for small clock differences; the server certificate lasts 365 days and the root 3650 days.
 2. **Persist the identity:** save only the public root/leaf DER and expiration in `https-identity.json`. Save the server's PKCS#8 DER key as the `https-server-key` credential through the native store; never put it in settings, temporary files, IPC, logs, or the repository. The issuing private key is discarded after the one server certificate is signed. Owned exported key buffers use `Zeroizing`; libraries/OS internals can retain transient copies. Each device generates its own identity; sharing the developer Rust bundle does not share certificates or credentials.
-3. **Trust certificate:** after GUI confirmation, add the public root to this user's OS trust. On macOS, invoke `/usr/bin/security` directly with argument arrays: discover the user's default keychain and add SSL trust in the user domain, with no `sudo`, shell, or admin-domain flag. On Windows, use Crypt32 to add the certificate to the current user's `ROOT` store. These operations may require OS authorization or be blocked by management policy. Do not bypass a denial or disable client certificate validation. [S23, S24]
+3. **Trust certificate:** the explicit **Set up HTTPS and trust certificate** button authorizes creation and current-user trust in one action, with no separate application confirmation for initial setup. The existing `setup_https` command retains its lifecycle-operation lock across creation, settings persistence, trust installation, and verification. Publish the newly created identity before requesting trust so a denial leaves visible, retryable state. The same button invokes the existing trust-only command when an enabled, unexpired identity is already present but untrusted; it does not regenerate that identity. On macOS, invoke `/usr/bin/security` directly with argument arrays: discover the user's default keychain and add SSL trust in the user domain, with no `sudo`, shell, or admin-domain flag. On Windows, use Crypt32 to add the certificate to the current user's `ROOT` store. These operations may require OS authorization or be blocked by management policy. Do not bypass a denial or disable client certificate validation. [S23, S24]
 4. **Verify and connect:** validate the chain, SAN, lifetime, and private-key match; evaluate trust against native-loaded roots. Trust status is refreshed at launch and on explicit checks/actions, with no background polling. This verifies the local chain, not Office connectivity or its browser permissions. Restart Office after trust changes, start the proxy, and copy the HTTPS URL. The existing HTTP URLs remain available. [S22]
-5. **Renew or remove:** renewal is explicit while stopped and replaces both root and leaf, removing the old root's trust. Because the issuing key is discarded, renewal needs a new trust approval; the GUI shows the expiry and does not silently renew roots or prompt during login. Remove HTTPS deletes this root's trust/certificate by exact identity, deletes its private key/public metadata, and disables HTTPS. Reset/pre-uninstall performs the same cleanup before clearing provider keys and settings. Do not delete unrelated roots. If cleanup is denied, retain an actionable failure and allow retry.
+5. **Renew or remove:** **Renew HTTPS and trust certificate** confirms replacement while stopped, replaces both root and leaf, removes the old root's trust, and requests and verifies replacement trust in the same operation. Because the issuing key is discarded, renewal needs a new OS trust approval; the GUI shows the expiry and does not silently renew roots or prompt during login. Remove HTTPS deletes this root's trust/certificate by exact identity, deletes its private key/public metadata, and disables HTTPS. Reset/pre-uninstall performs the same cleanup before clearing provider keys and settings. Do not delete unrelated roots. If cleanup is denied, retain an actionable failure and allow retry.
 
 Setup is opt-in for existing and new installations, because certificate trust requires a deliberate user decision. Older settings default `httpsEnabled` to false and `httpsPort` to 8788, preserving saved HTTP endpoints, keys, startup preferences, and browser-origin policy. If an existing HTTP client already uses port 8788, require a different HTTPS port when enabling it; do not invalidate the previous HTTP-only configuration.
 
@@ -169,47 +174,51 @@ Strip upstream `Strict-Transport-Security` and `Alt-Svc` along with existing coo
 
 ## 6. Settings and credential persistence
 
-Store non-secret JSON in the current user's platform application-data directory. Include `schema_version`, local port, startup preference, provider base URLs, optional provider metadata, and stable credential identifiers. Do not introduce a database for this small configuration surface.
+Store non-secret JSON in the current user's platform application-data directory. Include `schema_version`, local port, legacy startup compatibility field, provider base URLs, optional provider metadata, and stable credential identifiers. Do not introduce a database for this small configuration surface.
 
-The serialized settings use camelCase and add `httpsEnabled`/`httpsPort` with backward-compatible defaults. `https-identity.json` is a separate versioned, size-limited public-certificate document. Validate its chain, loopback names, and expiration cryptographically before activating it; validate the key match when loading from the native store. Do not infer trust solely from a saved boolean or successful file creation.
+The legacy `startAtLogin` field remains readable for schema compatibility and reset; it no longer controls worker launch. `worker-startup.json`, owned by the settings host, stores only the worker fingerprint and reset marker. It is separate from worker-owned proxy settings. The serialized settings use camelCase and add `httpsEnabled`/`httpsPort` with backward-compatible defaults. `https-identity.json` is a separate versioned, size-limited public-certificate document. Validate its chain, loopback names, and expiration cryptographically before activating it; validate the key match when loading from the native store. Do not infer trust solely from a saved boolean or successful file creation.
 
 Write through a temporary file and atomic replacement. Validate and migrate before activation; preserve the last working configuration if a save fails. Apply new provider snapshots to new requests, allowing in-flight requests to finish on their existing snapshot. Port changes require a controlled listener restart and a clear GUI status.
 
 Store provider keys under stable application-specific names in macOS Keychain or Windows Credential Manager through the native adapters. Credential-store calls that can block must run outside async networking tasks. Locked or denied stores produce an actionable state with no plaintext fallback. Reset also removes any obsolete local-token credential left by earlier builds. [S10]
 
+On macOS, keep using the user's login Keychain and its native application-specific approval for `llm-proxy-worker`. Moving credential access from the GUI to the worker can require a new **Always Allow** approval for existing items. Stable credential service/account identifiers and HTTPS identity are preserved; no key is copied into a new plaintext store. The settings window explains how to enter the login Keychain password in the macOS prompt and select **Always Allow**, separately for each provider credential and the HTTPS private key. The app cannot select or reliably verify this choice. It must not collect a Keychain password or broaden item access to every application. A locked Keychain still needs unlocking; updates to the current ad-hoc signed executable may require renewed approval. Stable Developer ID signing remains a release requirement, not a guarantee that a locked Keychain will be accessible. [S26]
+
+The runtime-only `platform` status field controls visibility of macOS guidance without another plugin or persisted setting. A deliberate **Check saved-key access** action invokes `check_saved_key_access` from the authorized settings window. The controller serializes it with settings/lifecycle operations, snapshots configured provider identifiers and HTTPS enablement, then uses a blocking worker and the existing credential adapter to read and immediately drop each configured secret. Missing, locked, or denied items return sanitized errors. IPC returns only success or an error; it never returns secret values or claims persistent authorization. The check makes no network requests, changes no settings or proxy state, and adds no polling or extra approval-check task. Normal worker startup independently reads configured credentials to start the proxy. After fixing access, the user can start a previously stopped proxy explicitly.
+
 Keep secrets out of URLs, process arguments, environment variables, config backups, and logs. Minimize in-memory copies and zeroize owned secret buffers where practical; this does not guarantee removal of every transient copy made by an OS or networking library. Deleting a provider configuration removes its credential as well.
 
 ## 7. Automatic startup and desktop lifecycle
 
-Automatic startup means **launch at user sign-in after reboot**. A service running before login is outside this per-user desktop design.
+Automatic startup means **after the user signs in following reboot**. Pre-login LaunchDaemons/Windows Services remain outside scope because the worker uses that user's unlocked Keychain/Credential Manager and certificate trust.
 
-Use the Tauri autostart plugin through `DesktopIntegration`, with a macOS LaunchAgent and the plugin's Windows per-user integration. Register a background-launch argument internally; users never need to enter it. Read the effective OS registration when displaying the setting, and handle registration failures or OS-disabled startup visibly. [S14]
+There is no Start at login checkbox and no resident GUI/tray host. First opening the installed app registers the worker automatically. The worker starts saved providers at each process launch. Initial setup with no providers leaves it stopped until the user saves a key and starts it. A saved legacy GUI login item is removed after worker registration; the former `--background` GUI argument is accepted only for migration and never opens a window.
 
-Configure the plugin's `macos_launcher` builder method only in macOS builds. The shared builder supplies `--background` on every supported platform; Windows uses the plugin's native startup implementation without calling the macOS-only API.
+- **macOS 13+:** bundle `app.llmproxy.worker.plist` in `Contents/Library/LaunchAgents`; its `BundleProgram` points to `Contents/MacOS/llm-proxy-worker`. Register it through SMAppService using the signed containing app. `RunAtLoad` starts at sign-in in the Aqua user session. `KeepAlive.SuccessfulExit=false` recovers crashes with a 30-second throttle; a normal worker shutdown is not immediately restarted. System Settings background-item approval remains under OS/user control. [S27]
+- **Windows:** register a unique task `llm_proxy-<user-SID>` with a per-user logon trigger, `InteractiveToken`, and `LeastPrivilege`. No account password is saved. The action is the worker executable directly, with no shell and only an internal `--managed` argument. The task permits battery operation, has no execution-time cap, and retries failures up to three times at one-minute intervals. Settings explicitly starts the registered task in the current session. [S28]
+- `worker-startup.json` records successful initialization and the installed worker SHA-256. Subsequent launches preserve OS-disabled registration rather than silently enabling it. When an enabled worker binary changes, re-register the service for the new identity. On macOS, wait for the asynchronous unregister completion (with a 15-second bound on a blocking thread) before registering a replacement; the synchronous API does not wait for the old process to be reaped. While OS approval is disabled, keep the previous fingerprint so restoring approval can still refresh the changed executable. A successful reset leaves a disabled marker; explicitly saving a provider or starting a newly configured proxy enrolls it again.
+- Development mode never registers, unregisters, or migrates OS startup entries. Running an unbundled macOS release binary reports that installation is required; it does not attempt to register a nonexistent bundled agent.
+- If registration fails or awaits approval, show the state and recovery guidance in settings. Opening settings can start an independent worker manually for the current sign-in; failure is never reported as successful automatic startup.
 
-Enable startup by default for new installations. Distinguish a missing settings file from saved settings: on first launch, register the default through the same save/rollback path as the GUI toggle. On subsequent launches, preserve saved preferences and read the effective OS registration without re-enabling startup. Resetting data for uninstall explicitly saves startup as disabled.
-
-| Event | Required behavior |
+| Event | Behavior |
 | --- | --- |
-| First manual launch | Create the host and settings window; keep proxy stopped until setup is complete. |
-| Automatic launch | Create host and tray only; load saved settings and start configured providers without a webview. |
-| Open settings / launch app again | Reuse the existing host and create or focus one settings window. |
-| Close settings | Destroy the settings window and detach its subscriptions; leave proxy and tray running. |
-| Stop proxy | Close listeners, stop admitting requests, and cancel/drain in-flight work within a five-second shutdown budget. Keep tray/settings available. |
-| Quit | Stop the proxy, release credentials and resources, remove tray controls, and exit. Do not restart in the same session. |
-| Disable startup | Remove OS startup registration; do not silently stop an already running proxy. |
+| Sign in | OS launches only the worker; start saved providers; create no GUI/webview/Dock/tray. |
+| Open settings | Connect to the existing worker or launch it; focus a single settings window. |
+| Close window / Quit settings | Exit all settings/webview processes; leave the worker and active requests running. |
+| Stop proxy | Cancel/drain proxy requests and close listeners within the existing five-second budget; worker stays available for settings. Stop lasts until Start or a later worker launch/sign-in. |
+| OS disables background startup | Preserve that decision on later settings launches; display disabled/approval-required status. |
+| Reset / prepare to uninstall | Stop proxy; remove HTTPS trust/private key and provider keys; reset settings; unregister worker and remove legacy GUI startup; stop remaining worker. Do credential/trust cleanup before unregistering because SMAppService can terminate the agent immediately. |
+| New setup after reset | Recreate an empty worker on demand; explicit provider save/Start registers background startup again. |
+| Windows upgrade/uninstall | Internal installer hooks stop/wait for the worker; uninstall also removes the task and legacy Run entries. No CLI steps are exposed to end users. |
 
-Use the single-instance plugin to route manual reactivation to the existing app before starting listeners. Do not register a keep-alive/watchdog policy that immediately restarts the app after explicit quit. [S15]
-
-At automatic startup, defer credential access until it is available and report blocked startup through the tray. Use bounded, event-driven or backoff recovery rather than repeated prompts or busy polling. Missing internet access must not prevent local listener startup.
+Registration and native approval failures stay actionable. The worker does not request new HTTPS trust at login. Locked credentials produce sanitized diagnostics; resolve them in settings and select Start. No repeated approval loop or automatic generation request is added.
 
 ## 8. Memory and background resource design
 
-**Required:** peak combined background RAM strictly below 200 MB. **Ideal:** below 100 MB. These include the host and every app-associated helper/webview process, even if a helper outlives the settings window.
+**Required:** peak combined background RAM strictly below 200 MB. **Ideal:** below 100 MB. These include the worker and every app-associated settings/helper/webview process, even if a helper outlives the settings window.
 
-- Start without constructing a webview; create one only to show settings.
-- Destroy closed settings windows instead of merely hiding them. Whether helper processes and allocations are actually reclaimed is a measurement question, not an assumption.
-- Use one Tokio runtime, a modest worker count, bounded tasks, and reused HTTP clients with small connection pools.
+- The worker has no webview or Tauri dependency. Start the settings process only on explicit launch and exit it completely on window close/Quit. Verify any OS-hosted webview helpers also terminate.
+- Use one worker Tokio runtime with two networking threads, bounded management tasks, and reused provider clients with small connection pools. The settings process has its own two-thread runtime only while open.
 - HTTP and HTTPS share a hard limit of 64 accepted connections, including incomplete TLS handshakes. Use tracked connection tasks; reject excess connections promptly. TLS handshakes have a five-second timeout, HTTP/1 headers a ten-second read timeout and 32 KiB buffer budget, and HTTP/2 limits of eight concurrent streams per connection, 32 KiB header lists, and a 64 KiB send buffer. The existing global eight-request forwarding budget applies across transports. Cancel listeners, incomplete handshakes, connections, and upstream bodies together on stop/drop.
 - Stream uploads and downloads without complete request/response buffering. Proposed initial limits are 8 active forwarded requests, 32 KiB of request headers, and a 32 MiB request body limit enforced incrementally. Reject excess work promptly instead of building an unbounded queue.
 - Bound individual transport queues and tune HTTP/2 flow-control buffers and connection pools against the measured budget. A body size limit alone does not bound process memory.
@@ -218,7 +227,7 @@ At automatic startup, defer credential access until it is available and report b
 
 The hard cap applies to the idle and representative forwarding workloads defined by the requirements. Measure open-window memory separately and check that closing the window returns to a stable background level.
 
-If the single-host design cannot meet the cap after settings have opened and closed, separate the settings GUI into an on-demand process that exits completely, leaving a small Rust proxy/tray host. That fallback needs a permission-restricted local IPC channel and its own lifecycle review. Make this decision during the initial prototype, before building the full GUI; do not relax the RAM requirement to accommodate the framework.
+The worker/GUI split is the implemented memory isolation boundary. It reduces the resident background process set but does not itself establish the RAM target. Measure the packaged worker and all remaining associated processes under the representative workload before release.
 
 ## 9. Installation and distribution
 
@@ -234,7 +243,7 @@ On Windows, use Evergreen WebView2 and automatically install it through the GUI 
 
 The proposed 75 MB download target covers the primary app installer. Record any additional runtime download and total installed size separately; a fully offline Windows installer containing WebView2 may exceed that target and is not the primary MVP artifact. After dependencies are installed, setup and local server startup must work offline.
 
-Provide graphical removal of credentials, settings, and startup registration. Windows uninstall hooks must remove startup registration and offer data removal. On macOS, provide a **Prepare to Uninstall** action that removes credentials/data and disables startup before the user removes the application in Finder. Handle upgrades without duplicating startup registrations or losing credential identifiers.
+Provide graphical removal of credentials, settings, and startup registration. Windows uninstall hooks remove worker task/legacy registration and stop the worker; the in-app reset performs explicit secret/trust cleanup. On macOS, provide a **Prepare to Uninstall** action that removes credentials/data and disables startup before the user removes the application in Finder. Handle upgrades without duplicating startup registrations or losing credential identifiers.
 
 Use the in-app reset/pre-uninstall action before deleting the application to remove its local HTTPS root trust and server private key. Deleting application files alone cannot be assumed to remove OS trust or credential entries. Public release acceptance must include trust install/cancel/deny, renewal, reboot reuse, and certificate removal for the current user on both operating systems.
 
@@ -251,18 +260,27 @@ llm_proxy/
   src/                       # Svelte settings UI and typed IPC client
   src-tauri/
     src/
-      app.rs                 # Controller and lifecycle
-      commands.rs            # GUI command boundary
-      desktop.rs             # Tray, native menus, on-demand windows
-      credentials.rs         # Native store adapter
-      certificates.rs        # Device identity, public metadata, trust status
-      certificates/platform.rs # User-scoped native trust install/removal
-      settings.rs            # JSON validation, persistence, migration
+      app.rs                 # GUI-to-worker typed IPC adapter and status subscription
+      commands.rs            # Authorized settings-window command boundary
+      desktop.rs             # Settings window and native menu
+      startup.rs             # SMAppService / Task Scheduler registration and migration
+    macos/                   # Bundled worker LaunchAgent plist
+    windows/                 # NSIS worker stop/uninstall hooks
     capabilities/            # Restricted settings-window permissions
-    tauri.conf.json
+    tauri.conf.json          # Worker external binary and agent bundle mapping
   crates/proxy-core/
-    src/                     # Routing, streaming, auth, provider adapters, Rustls identity
+    src/                     # Routing, streaming, auth, provider adapters, TLS identity
     tests/                   # Deterministic loopback upstream fixtures
+  crates/proxy-service/
+    src/
+      main.rs                # Headless worker runtime / internal installer stop
+      app.rs                 # Authoritative controller, diagnostics, lifecycle
+      ipc.rs                 # Versioned bounded requests and status subscriptions
+      transport.rs           # Unix socket / current-user named pipe / singleton
+      credentials.rs         # Native secret adapter
+      certificates.rs        # Identity, public metadata, trust status
+      certificates/platform.rs # Current-user trust install/removal
+      settings.rs            # JSON validation and atomic persistence
   postman/                   # Local native-provider transport simulation
   scripts/                   # Simulation verification and repository-local Rust wrapper
   .toolchains/rust/          # Optional host-specific Rust/Cargo installation; Git-ignored
@@ -279,12 +297,12 @@ Share this large binary/cache bundle separately from Git, preserving hidden file
 
 ## 11. Validation and implementation sequence
 
-1. **Resource prototype:** build a release-mode tray host with an on-demand settings window, credential access, autostart, and one streamed request path. Measure all three required architectures before expanding the UI.
+1. **Resource validation:** build the release worker and on-demand settings app with native credentials, startup registration, and one streamed request path. Measure all three required architectures before expanding the UI.
 2. **Proxy core:** verify authentication replacement, URL/base-path handling, safe headers, streaming, cancellation, error preservation, concurrency limits, and shutdown against deterministic local upstream fixtures. No paid API is needed for these checks.
-3. **GUI and lifecycle:** implement provider setup, connection tests, credential handling, port conflicts, tray controls, and first/manual/automatic launch behavior. Use a non-generation authenticated request for connection tests where supported; otherwise explain possible billing before testing.
+3. **GUI and lifecycle:** implement provider setup, connection tests, credential handling, port conflicts, private IPC, and first/manual/automatic launch behavior. Use a non-generation authenticated request for connection tests where supported; otherwise explain possible billing before testing.
 4. **Compatibility:** validate the agreed Claude/OpenAI client scenarios, including streaming, against controlled fixtures. Then perform explicitly configured live smoke checks without recording real secrets or message content.
    HTTPS fixtures must check CA/hostname verification without insecure TLS overrides, untrusted-certificate rejection, approved/denied origins, unauthenticated preflights, provider-key authentication, HTTP/2 authority handling, early SSE delivery, capacity shared with HTTP, client cancellation, incomplete-handshake shutdown, port-conflict rollback, and self-proxy rejection on both ports. Certificate tests generate unique identities, reject expired/corrupt/mismatched material, preserve old HTTP-only settings, and avoid changing the test machine's OS trust or credentials. Native trust and Office behavior remain separate manual platform gates.
-5. **Release:** verify signed installers on clean user accounts, missing-runtime handling, reboot/sign-in startup, disable-startup, quit, upgrade, and uninstall.
+5. **Release:** verify signed installers on clean user accounts, missing-runtime handling, reboot/sign-in startup, OS-disabled startup, settings quit with active proxy streams, upgrade, and uninstall.
 
 For the initial memory gate, settle for 60 seconds, sample the combined process-tree memory once per second for 10 minutes idle, then 10 minutes with 8 simultaneous SSE connections against a local upstream emitting fixed 1 KiB events once per second. Repeat after 20 settings open/close cycles. Add a large-body and slow-client run to catch buffering growth. Record machines, OS/runtime versions, executable versions, payloads, throughput, CPU, and peak memory.
 
@@ -334,3 +352,7 @@ Framework and library documentation was reviewed on November 15, 2026. Source la
 - S23 — Apple security tool user trust/authorization: `https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/security.1`
 - S24 — Windows certificate stores and Crypt32: `https://learn.microsoft.com/windows/win32/seccrypto/system-store-locations`; `https://learn.microsoft.com/windows/win32/api/wincrypt/nf-wincrypt-certopensystemstorew`
 - S25 — Rustup environment and host toolchains: `https://rust-lang.github.io/rustup/environment-variables.html`
+- S26 — Apple Keychain Access, permission choices (reviewed November 16, 2026): `https://support.apple.com/guide/keychain-access/kyca1243/mac`
+
+- S27 — Apple SMAppService: `https://developer.apple.com/documentation/servicemanagement/smappservice` (including bundled agent registration and executable updates).
+- S28 — Microsoft Task Scheduler security contexts and logon triggers: `https://learn.microsoft.com/windows/win32/taskschd/security-contexts-for-running-tasks`, `https://learn.microsoft.com/windows/win32/taskschd/logon-trigger-example--xml-`.

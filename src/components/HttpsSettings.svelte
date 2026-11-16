@@ -18,32 +18,33 @@
   const expired = $derived(
     status.certificate.expiresAt !== null && status.certificate.expiresAt * 1000 <= Date.now(),
   );
+  const needsTrustOnly = $derived(
+    status.httpsEnabled && status.certificate.configured && !expired && !status.certificate.trusted,
+  );
 
   async function setup(): Promise<void> {
+    const trustOnly = needsTrustOnly;
     if (
       status.certificate.configured &&
+      !trustOnly &&
       !(await onConfirm(
-        'Replace the local HTTPS certificate and remove its previous trust? You will need to trust the new certificate and restart Office.',
+        'Replace the local HTTPS certificate and trust its replacement for this user account? This removes the previous trust. The OS may ask for approval. Restart Office afterward.',
       ))
     )
       return;
     await perform(async () => {
-      onStatus(await proxyClient.setupHttps());
-      onNotice('HTTPS is set up. Select Trust certificate, then start the proxy.');
-    });
-  }
-
-  async function trust(): Promise<void> {
-    if (
-      !(await onConfirm(
-        'Trust llm_proxy’s local HTTPS certificate for this user account? This lets Office verify connections to localhost. The OS may ask for approval.',
-      ))
-    )
-      return;
-    await perform(async () => {
-      onStatus(await proxyClient.trustHttpsCertificate());
+      try {
+        onStatus(
+          await (trustOnly ? proxyClient.trustHttpsCertificate() : proxyClient.setupHttps()),
+        );
+      } catch (error) {
+        // Setup can succeed before OS trust is denied. Keep retry on the saved certificate.
+        const latest = await proxyClient.getStatus().catch(() => null);
+        if (latest) onStatus(latest);
+        throw error;
+      }
       onNotice(
-        'Certificate trust verified. Restart Office, start the proxy, and use the HTTPS URL below.',
+        'HTTPS is set up and certificate trust is verified. Restart Office, start the proxy, and use the HTTPS URL below.',
       );
     });
   }
@@ -80,7 +81,7 @@
       onNotice(
         next.certificate.trusted
           ? 'Certificate trust verified. Restart Office if it was already open.'
-          : 'Certificate trust is not verified. Trust the certificate or renew it if expired.',
+          : 'Certificate trust is not verified. Select Set up HTTPS and trust certificate, or renew it if expired.',
         !next.certificate.trusted,
       );
     });
@@ -89,12 +90,15 @@
 
 <section class="https-settings" aria-labelledby="https-heading">
   <h2 id="https-heading">Office gateway HTTPS</h2>
-  <p>Set up and trust a local certificate to connect Claude for Office over HTTPS.</p>
+  <p>
+    Create and trust a local certificate for your user account to connect Claude for Office over
+    HTTPS. The OS may ask for approval.
+  </p>
   <p class="certificate-state" role="status">
     {#if !status.certificate.configured}HTTPS is not set up.
     {:else if expired}Certificate expired. Stop the proxy and renew it.
     {:else if status.certificate.trusted}Certificate trusted on this computer.
-    {:else}Certificate created. Trust it before connecting Office.{/if}
+    {:else}Certificate created. Select Set up HTTPS and trust certificate to finish or retry.{/if}
   </p>
   {#if status.certificate.expiresAt}
     <p>Certificate expires {new Date(status.certificate.expiresAt * 1000).toLocaleDateString()}.</p>
@@ -114,14 +118,15 @@
     >
   </div>
   <div class="https-actions">
-    <button class="button secondary small" onclick={setup} disabled={disabled || running}>
-      {status.certificate.configured ? 'Renew certificate' : 'Set up HTTPS'}
-    </button>
     <button
       class="button secondary small"
-      onclick={trust}
-      disabled={disabled || !status.certificate.configured || expired}>Trust certificate</button
+      onclick={setup}
+      disabled={disabled || (running && !needsTrustOnly)}
     >
+      {status.certificate.configured && !needsTrustOnly
+        ? 'Renew HTTPS and trust certificate'
+        : 'Set up HTTPS and trust certificate'}
+    </button>
     <button
       class="text-button"
       onclick={checkTrust}
@@ -134,9 +139,10 @@
     {/if}
   </div>
   <p class="field-hint">
-    Stop the proxy to set up, renew, remove, or change its HTTPS port. After trusting the
-    certificate, restart Office and use the HTTPS base URL below with your saved provider API key.
-    Managed computers may require administrator approval.
+    Stop the proxy to create, renew, remove, or change its HTTPS port. Setup includes certificate
+    trust; if approval fails, use the same button to retry with the saved certificate. After setup,
+    restart Office and use the HTTPS base URL below with your saved provider API key. Managed
+    computers may require administrator approval.
   </p>
   {#if status.certificate.fingerprint}
     <details>

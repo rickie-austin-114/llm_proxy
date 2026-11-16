@@ -25,7 +25,7 @@ use zeroize::Zeroizing;
 
 use crate::{credentials::CredentialStore, error::AppError};
 
-#[derive(Clone, Default, Serialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CertificateStatus {
     pub configured: bool,

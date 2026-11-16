@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { delimiter, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { prepareWorker } from './prepare-worker.mjs';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(import.meta.url);
@@ -72,10 +73,14 @@ function rustEnvironment() {
 
 try {
   const [command, ...args] = process.argv.slice(2);
-  if (!['tauri', 'cargo', 'rustc', 'rustup'].includes(command)) {
+  if (!['tauri', 'cargo', 'rustc', 'rustup', 'worker'].includes(command)) {
     throw new Error('Usage: node scripts/with-rust.mjs <tauri|cargo|rustc|rustup> [arguments...]');
   }
   const env = rustEnvironment();
+  if (command === 'worker' || (command === 'tauri' && ['build', 'dev'].includes(args[0]))) {
+    prepareWorker(repoRoot, env, args);
+  }
+  if (command === 'worker') process.exit(0);
   const child =
     command === 'tauri'
       ? spawn(process.execPath, [require.resolve('@tauri-apps/cli/tauri.js'), ...args], {

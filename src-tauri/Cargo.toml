@@ -14,30 +14,21 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+proxy-service = { path = "../crates/proxy-service" }
 proxy-core = { path = "../crates/proxy-core" }
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-autostart = "2"
+tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
-keyring-core = "1"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-thiserror.workspace = true
-zeroize.workspace = true
 tempfile = "3"
 arboard = { version = "3", default-features = false }
-rustls.workspace = true
-rustls-native-certs = "0.8"
-rcgen.workspace = true
-sha2 = "0.10"
-time = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-apple-native-keyring-store = { version = "1", features = ["keychain"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-native-keyring-store = "1"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSString"] }
+objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation", "block2"] }
 
 [dev-dependencies]
 tempfile = "3"

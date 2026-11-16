@@ -27,9 +27,8 @@ export const proxyClient = {
   removeHttps: (): Promise<AppStatus> => invoke('remove_https'),
   setBrowserOrigins: (origins: string[]): Promise<AppStatus> =>
     invoke('set_browser_origins', { origins }),
-  setStartAtLogin: (enabled: boolean): Promise<AppStatus> =>
-    invoke('set_start_at_login', { enabled }),
   revealProviderKey: (id: ProviderId): Promise<string> => invoke('reveal_provider_key', { id }),
+  checkSavedKeyAccess: (): Promise<void> => invoke('check_saved_key_access'),
   copyText: (value: string): Promise<void> => invoke('copy_text', { value }),
   reset: (): Promise<AppStatus> => invoke('reset_app_data'),
   onStatus: (callback: (status: AppStatus) => void): Promise<UnlistenFn> =>

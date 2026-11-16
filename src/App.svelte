@@ -127,25 +127,19 @@
     });
   }
 
-  async function toggleStartup(event: Event): Promise<void> {
-    const checkbox = event.currentTarget;
-    if (!(checkbox instanceof HTMLInputElement)) return;
-    const enabled = checkbox.checked;
-    await perform(async () => {
-      updateStatus(await proxyClient.setStartAtLogin(enabled));
-      notify(
-        enabled
-          ? 'The proxy will start in the background when you sign in.'
-          : 'Automatic startup disabled.',
-      );
-    });
-    checkbox.checked = status.startAtLogin;
-  }
-
   async function copyUrl(value: string): Promise<void> {
     await perform(async () => {
       await proxyClient.copyText(value);
       notify('Local base URL copied.');
+    });
+  }
+
+  async function checkSavedKeyAccess(): Promise<void> {
+    await perform(async () => {
+      await proxyClient.checkSavedKeyAccess();
+      notify(
+        'Saved keys are accessible now. macOS does not tell the app whether you selected Always Allow. Select Start proxy if it is stopped.',
+      );
     });
   }
 
@@ -226,6 +220,29 @@
         <h2 id="providers-heading">Provider connections</h2>
         <p>Keys stay in your OS credential store. Requests go to the endpoint you choose.</p>
       </div>
+      {#if !loading && status.platform === 'macos'}
+        <aside class="keychain-help" aria-labelledby="keychain-heading">
+          <h3 id="keychain-heading">Remember Keychain access on this Mac</h3>
+          <p>
+            When macOS asks llm-proxy-worker to access its saved keys, enter your login Keychain
+            password (usually your Mac login password) and choose <strong>Always Allow</strong>. The
+            background worker may need approval once after this update. Approve each prompt; Claude,
+            OpenAI, and the HTTPS private key are separate items.
+          </p>
+          <button
+            class="button secondary small"
+            onclick={checkSavedKeyAccess}
+            disabled={disabled ||
+              status.settingsNeedReset ||
+              (!hasProvider && !status.httpsEnabled)}>Check saved-key access</button
+          >
+          <p class="field-hint">
+            This reads saved keys without contacting your providers. A locked Keychain still needs
+            unlocking. App updates may require approval again. macOS controls remembered approval;
+            the app cannot select Always Allow for you.
+          </p>
+        </aside>
+      {/if}
       <div class="providers-grid">
         {#each status.providers as provider (provider.id)}
           <ProviderSettings
@@ -291,18 +308,22 @@
     <section class="preferences" aria-labelledby="preferences-heading">
       <h2 id="preferences-heading">Background & startup</h2>
       <div class="preferences-row">
-        <label class="startup-label"
-          ><input
-            type="checkbox"
-            checked={status.startAtLogin}
-            onchange={toggleStartup}
-            disabled={disabled || status.settingsNeedReset}
-          /><span
-            ><strong>Start at login</strong><span
-              >Run the configured proxy in the background when you sign in.</span
-            ></span
-          ></label
-        >
+        <div class="startup-description">
+          <strong>Automatic background proxy</strong>
+          <p>
+            {status.backgroundStartup === 'enabled'
+              ? 'The proxy starts after you sign in. This settings app stays closed.'
+              : status.backgroundStartup === 'approval_required'
+                ? 'Allow llm_proxy under Login Items & Extensions in macOS System Settings.'
+                : status.backgroundStartup === 'disabled'
+                  ? status.platform === 'windows'
+                    ? 'Background startup is disabled. Check the llm_proxy task in Windows Task Scheduler, or save a provider after resetting to set up again.'
+                    : 'Background startup is disabled. Check macOS Login Items & Extensions, or save a provider after resetting to set up again.'
+                  : status.backgroundStartup === 'development'
+                    ? 'Development mode: automatic startup is not registered.'
+                    : 'Background startup needs attention. Check diagnostics and your OS startup permissions.'}
+          </p>
+        </div>
         <div class="port-setting">
           <label for="local-port">Local port</label>
           <div class="port-controls">
@@ -323,8 +344,9 @@
         </div>
       </div>
       <p class="field-hint">
-        Closing this window keeps the proxy available in the menu bar or system tray. Choose Quit
-        there to exit.
+        Closing or quitting settings leaves the proxy running. Open llm_proxy from Applications or
+        the Start menu to return here. Use Stop proxy to stop requests until the worker starts again
+        after sign-in.
       </p>
     </section>
 

@@ -109,5 +109,9 @@ fn remove(id: &str) -> Result<(), AppError> {
 }
 
 fn credential_error() -> AppError {
-    AppError::new("credential_store_unavailable", "The OS credential store is locked or unavailable. Unlock it or allow access, then try again. No plaintext fallback is used.")
+    #[cfg(target_os = "macos")]
+    let message = "Keychain access was denied or is unavailable. Unlock your login Keychain, then try again. When macOS asks llm-proxy-worker for access, enter your login Keychain password and choose Always Allow to remember approval for this background worker.";
+    #[cfg(not(target_os = "macos"))]
+    let message = "The OS credential store is locked or unavailable. Unlock it or allow access, then try again. No plaintext fallback is used.";
+    AppError::new("credential_store_unavailable", message)
 }

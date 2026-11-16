@@ -16,3 +16,4 @@ src-tauri/icons/ios/
 postman/.dependencies/
 sim.ndjson
 sim.err
+src-tauri/binaries/

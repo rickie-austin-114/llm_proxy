@@ -25,7 +25,7 @@ pub async fn get_status(
     controller: State<'_, Arc<AppController>>,
 ) -> Result<AppStatus, AppError> {
     authorize(&window)?;
-    Ok(controller.status().await)
+    controller.status().await
 }
 
 #[tauri::command]
@@ -151,16 +151,6 @@ pub async fn remove_https(
 }
 
 #[tauri::command]
-pub async fn set_start_at_login(
-    window: WebviewWindow,
-    controller: State<'_, Arc<AppController>>,
-    enabled: bool,
-) -> Result<AppStatus, AppError> {
-    authorize(&window)?;
-    controller.set_start_at_login(enabled).await
-}
-
-#[tauri::command]
 pub async fn reveal_provider_key(
     window: WebviewWindow,
     controller: State<'_, Arc<AppController>>,
@@ -168,6 +158,15 @@ pub async fn reveal_provider_key(
 ) -> Result<String, AppError> {
     authorize(&window)?;
     controller.provider_key(id).await
+}
+
+#[tauri::command]
+pub async fn check_saved_key_access(
+    window: WebviewWindow,
+    controller: State<'_, Arc<AppController>>,
+) -> Result<(), AppError> {
+    authorize(&window)?;
+    controller.check_saved_key_access().await
 }
 
 #[tauri::command]

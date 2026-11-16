@@ -1,6 +1,6 @@
 {
   "name": "llm-proxy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "lint": "eslint src",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "worker:build": "node scripts/with-rust.mjs worker"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

@@ -1,12 +1,9 @@
-use std::sync::Arc;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
-};
+#[cfg(target_os = "macos")]
+use tauri::menu::{Menu, MenuItem};
 
-use crate::{app::AppController, error::AppError};
+use crate::error::AppError;
 
 #[cfg(target_os = "macos")]
 pub fn install_app_menu(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -40,37 +37,20 @@ pub fn install_app_menu(app: &AppHandle) -> Result<(), Box<dyn std::error::Error
         ],
     )?;
     app.set_menu(Menu::with_items(app, &[&application, &edit])?)?;
-    Ok(())
-}
-
-fn handle_menu(app: &AppHandle, id: &str) {
-    let controller = app.state::<Arc<AppController>>().inner().clone();
-    match id {
+    app.on_menu_event(|app, event| match event.id.as_ref() {
         "settings" => {
             let _ = open_settings(app);
         }
-        "start" => {
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = controller.start().await {
-                    controller.report(error).await;
-                }
-            });
-        }
-        "stop" => {
-            tauri::async_runtime::spawn(async move {
-                let _ = controller.stop().await;
-            });
-        }
-        "quit" => {
-            tauri::async_runtime::spawn(async move {
-                controller.quit().await;
-            });
-        }
+        "quit" => app.exit(0),
         _ => {}
-    }
+    });
+    Ok(())
 }
 
 pub fn open_settings(app: &AppHandle) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Regular)
+        .map_err(|_| settings_window_error())?;
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -89,40 +69,13 @@ pub fn open_settings(app: &AppHandle) -> Result<(), AppError> {
                     && url.port() == Some(1420))
         })
         .build()
-        .map_err(|_| {
-            AppError::new(
-                "settings_window_failed",
-                "The settings window could not be opened. Restart the app.",
-            )
-        })?;
+        .map_err(|_| settings_window_error())?;
     Ok(())
 }
 
-pub fn install_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    app.on_menu_event(|app, event| handle_menu(app, event.id.as_ref()));
-    let settings = MenuItem::with_id(app, "settings", "Open settings", true, None::<&str>)?;
-    let start = MenuItem::with_id(app, "start", "Start proxy", true, None::<&str>)?;
-    let stop = MenuItem::with_id(app, "stop", "Stop proxy", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit llm_proxy", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&settings, &start, &stop, &quit])?;
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
-    TrayIconBuilder::with_id("main")
-        .icon(icon)
-        .tooltip("llm_proxy: Stopped")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_tray_icon_event(|tray, event| {
-            if matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-            ) {
-                let _ = open_settings(tray.app_handle());
-            }
-        })
-        .build(app)?;
-    Ok(())
+fn settings_window_error() -> AppError {
+    AppError::new(
+        "settings_window_failed",
+        "The settings window could not be opened. Restart the app.",
+    )
 }

@@ -2,7 +2,7 @@
 
 Status: Project conventions for implementation
 
-Date: November 15, 2026
+Date: November 16, 2026
 
 ## 1. Scope and principles
 
@@ -75,7 +75,7 @@ Keep HTTP adapters, GUI command handlers, and domain logic separate. A handler v
 - Keep finite connection/header deadlines separate from streaming inactivity limits. Do not silently retry generation requests.
 - Prefer events over frequent polling. Use bounded backoff for recovery work and stop it when the app quits.
 
-Opening and closing the GUI must clean up listeners, subscriptions, timers, and webview resources. Closing settings, stopping the proxy, and quitting are distinct operations and must have distinct implementations.
+Opening and closing the GUI must clean up listeners, subscriptions, timers, and webview resources. Closing or quitting settings releases the GUI and preserves the worker. Stopping the proxy or exiting the worker releases networking resources. Keep GUI and worker lifecycles separate.
 
 ## 6. TypeScript and Svelte conventions
 

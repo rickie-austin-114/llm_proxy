@@ -26,12 +26,13 @@ export function parsePort(value: string): number | null {
 
 export function previewStatus(): AppStatus {
   return {
+    platform: 'preview',
     phase: 'stopped',
     localPort: 8787,
     httpsPort: 8788,
     httpsEnabled: false,
     certificate: { configured: false, trusted: false, expiresAt: null, fingerprint: null },
-    startAtLogin: true,
+    backgroundStartup: 'enabled',
     browserOrigins: ['https://pivot.claude.ai'],
     providers: [
       {

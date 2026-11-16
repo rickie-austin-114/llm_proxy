@@ -1,12 +1,12 @@
 [workspace]
-members = ["crates/proxy-core", "src-tauri"]
+members = ["crates/proxy-core", "crates/proxy-service", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
 rust-version = "1.100"
 license = "MIT"
-version = "0.1.0"
+version = "0.2.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

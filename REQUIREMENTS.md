@@ -2,7 +2,7 @@
 
 Status: MVP requirements; implementation present, release acceptance pending
 
-Date: November 15, 2026
+Date: November 16, 2026
 
 ## 1. Purpose
 
@@ -18,7 +18,7 @@ Installation, setup, and everyday operation must be possible without a terminal 
 - Let users configure Claude and OpenAI API keys and upstream endpoints.
 - Expose a proxy on localhost.
 - Make installation straightforward and entirely graphical.
-- Support automatic startup after a reboot, when the user signs in, with GUI controls to enable or disable it.
+- Automatically start a headless proxy worker after reboot/sign-in; keep the settings application closed.
 - Keep background RAM usage strictly below 200 MB, ideally below 100 MB, across all application processes.
 
 The remaining sections define the proposed minimum viable product (MVP). Items explicitly labeled as proposed defaults or targets can be adjusted before implementation.
@@ -51,7 +51,7 @@ Initial baselines are macOS 13+ and Windows 11 x64. Windows on ARM is outside th
 5. The user saves the configuration and selects **Start Proxy**.
 6. The application displays the running status and a copyable local base URL. The client uses the same API key saved for that provider in the GUI.
 7. The user configures their API client with those values using the client's existing setup flow.
-8. Automatic startup is enabled by default so the configured proxy is available after subsequent reboots and sign-ins. The user can disable it in the GUI.
+8. Register automatic worker startup during setup so the saved proxy is available after subsequent reboots/sign-ins without launching the settings app. No Start at login checkbox is shown.
 
 All application steps must be available in the GUI. The app must distinguish a successful local startup from a successful upstream connection test.
 
@@ -68,12 +68,12 @@ All application steps must be available in the GUI. The app must distinguish a s
 - Explain errors in plain language and suggest a useful next action.
 - Preserve settings and credentials between launches using appropriate storage.
 - Support keyboard navigation, readable text, and status indicators that do not rely on color alone.
-- Provide a **Start at login** setting that enables or disables automatic startup entirely through the GUI on macOS and Windows.
-- Provide a menu bar or system tray control to reopen the GUI, view proxy status, stop the proxy, and quit while the app runs in the background.
+- Show automatic background startup status and actionable OS permission guidance; remove the Start at login checkbox.
+- Keep Start Proxy / Stop Proxy controls in settings; reopen settings from Applications or the Windows Start menu.
 
-Automatic startup is enabled by default for new installations and registered on first launch. Preserve existing saved preferences, including disabled startup. When enabled, launch in the background at user sign-in after a reboot and start the proxy using saved configuration without requiring the user to open the setup window. Handle unavailable or locked credentials with a clear status and recovery action, without storing an insecure fallback copy. Resetting data to prepare for uninstall must leave startup disabled.
+The headless worker runs independently of the settings app, with no resident GUI, tray, or webview dependency. Closing or quitting settings exits the GUI and leaves existing proxy requests running. Register the worker automatically on first opening the installed app and migrate the old GUI startup entry. On subsequent launches, preserve OS-disabled worker registration and show that state. OS approval prompts remain under user control.
 
-Closing the setup window keeps an enabled proxy running with a visible menu bar or system tray indicator. Explicitly quitting the app stops the proxy and exits all application processes; it must not immediately relaunch itself. Disabling automatic startup prevents launch at subsequent sign-ins, and uninstalling removes startup registration.
+Startup occurs after user sign-in, using native per-user credentials/trust. Running before sign-in is outside scope. Locked credentials produce actionable diagnostics without plaintext fallback or repeated prompts. Reset/pre-uninstall removes credentials/trust and worker registration, stops the worker, and leaves automatic startup disabled until an explicit new setup. Stop Proxy closes listeners until Start or a subsequent worker launch/sign-in. Uninstall must stop the worker and remove registration.
 
 ## 6. Proxy requirements
 
@@ -95,16 +95,17 @@ MVP assumption: the proxy preserves each provider's protocol. Translating OpenAI
 
 - Bind only to loopback interfaces. Remote devices must not be able to connect.
 - Use a localhost HTTP address; local HTTPS certificates must not be required for basic setup.
-- Provide optional localhost HTTPS for Claude for Office on a separate configurable port, default 8788. Generate a unique device certificate, store its private key in the OS credential store, and provide graphical trust, trust checking, renewal, and removal without terminal commands. Trust is user-approved and scoped to the current user; preserve existing HTTP client URLs. Reset/pre-uninstall removes the app's HTTPS trust and private key.
+- Provide optional localhost HTTPS for Claude for Office on a separate configurable port, default 8788. Generate a unique device certificate, store its private key in the OS credential store, and provide graphical trust, trust checking, renewal, and removal without terminal commands. A single **Set up HTTPS and trust certificate** action creates the identity, requests current-user trust, and verifies it; retain required OS approval prompts. Retry denied trust using the saved certificate rather than generating a replacement. Renewal also includes trust after confirming replacement. Preserve existing HTTP client URLs. Reset/pre-uninstall removes the app's HTTPS trust and private key.
 - Handle IPv4 and IPv6 loopback consistently where supported, and display an address that is actually reachable.
 - Detect port conflicts and allow users to choose another port through the GUI.
 - Keep provider routing unambiguous when both providers are configured.
-- Stop accepting new requests when stopped or when the app quits, and close active requests cleanly with a bounded shutdown time.
+- Stop accepting new requests when stopped or when the worker exits, and close active requests cleanly with a bounded shutdown time.
 - Prevent multiple app instances from silently starting conflicting proxy servers.
 
 ## 7. Credentials, privacy, and security
 
 - Store upstream API keys in the OS credential store: macOS Keychain and a suitable Windows credential facility.
+- On macOS, guide users to choose **Always Allow** in the native Keychain prompt for remembered application access. Provide a user-initiated check of configured provider keys and the optional HTTPS private key without exposing secrets or sending network requests. Explain that locked Keychains and changed app identities can still require approval; never collect the Keychain password in the app or grant access to all applications.
 - Do not store API keys in plaintext configuration files, logs, crash reports, or source code.
 - Use HTTPS for remote upstream endpoints and validate certificates. Permit HTTP only for explicitly configured loopback upstream endpoints.
 - Forward credentials only to the selected, saved upstream origin. Do not follow redirects that would disclose credentials to another origin.
@@ -152,11 +153,11 @@ The background memory limit is a required budget. Other performance figures belo
 6. An invalid key, unreachable endpoint, occupied port, upstream rate limit, and interrupted stream each produce an understandable error without crashing the app.
 7. The local server accepts loopback requests authenticated with the selected provider's saved API key, rejects requests without that key, and cannot be reached from another device on the network. Replacing a provider key updates local authentication for new requests without interrupting an existing stream.
 8. Stored configuration and diagnostic output contain no plaintext API keys or default prompt/response logging.
-9. Stopping or quitting releases the listening port, and relaunching the app allows the proxy to start again.
+9. Stop Proxy releases the listening port; closing or quitting settings preserves proxy availability and active requests.
 10. Release artifacts and runtime measurements are checked on all supported architectures against the agreed installation and lightweight-operation requirements.
-11. With automatic startup enabled, rebooting and signing in launches the app in the background and makes the configured proxy available without manually opening the app. Disabling the setting prevents automatic launch on the next sign-in.
+11. Reboot/sign-in launches only the registered worker and makes the configured proxy available without a settings window. OS-disabled worker startup is respected on subsequent launches.
 12. Background operation remains below 200 MB combined RAM across app and helper processes under the defined idle and representative forwarding checks; results also report progress toward the ideal of below 100 MB. Repeatedly opening and closing the GUI must not cause sustained memory growth.
-13. Closing the window preserves proxy availability and a visible menu bar or system tray control. Explicit quit stops all application processes, and uninstalling removes automatic startup registration.
+13. Closing/quitting settings exits its processes while preserving the worker. Reset/pre-uninstall removes startup registration and stops the worker; graphical installation bundles both executables.
 
 ## 10. Outside the initial scope
 
