@@ -28,6 +28,11 @@ pub enum Request {
     Status,
     Subscribe,
     Start,
+    StartAfterSkip,
+    CompleteOnboarding,
+    SkipOnboarding {
+        draft: Option<crate::app::ProviderDraft>,
+    },
     Stop,
     SaveProvider {
         id: Provider,
@@ -196,6 +201,9 @@ async fn execute(controller: &AppController, request: &mut Request) -> Result<Re
         }
         Request::Status => controller.status().await,
         Request::Start => controller.start().await?,
+        Request::StartAfterSkip => controller.start_after_skip().await?,
+        Request::CompleteOnboarding => controller.complete_onboarding().await?,
+        Request::SkipOnboarding { draft } => controller.skip_onboarding(draft.take()).await?,
         Request::Stop => controller.stop().await?,
         Request::SaveProvider {
             id,

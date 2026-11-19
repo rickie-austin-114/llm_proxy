@@ -50,6 +50,13 @@ pub struct ProviderStatus {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderDraft {
+    pub id: Provider,
+    pub upstream_base_url: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
     pub platform: String,
@@ -64,6 +71,45 @@ pub struct AppStatus {
     pub last_error: Option<AppError>,
     pub diagnostics: Vec<Diagnostic>,
     pub settings_need_reset: bool,
+    #[serde(default)]
+    pub onboarding_complete: bool,
+    #[serde(default)]
+    pub onboarding_skipped: bool,
+}
+
+impl AppStatus {
+    pub fn validate_onboarding_prerequisites(&self) -> Result<(), AppError> {
+        if self.settings_need_reset {
+            return Err(AppError::new(
+                "settings_invalid",
+                "Reset app data before continuing setup.",
+            ));
+        }
+        if !self.providers.iter().any(|provider| provider.has_key) {
+            return Err(AppError::new(
+                "missing_key",
+                "Save a Claude or OpenAI API key first.",
+            ));
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if !self.https_enabled
+            || !self.certificate.configured
+            || !self.certificate.trusted
+            || !self
+                .certificate
+                .expires_at
+                .is_some_and(|expiry| expiry > now as i64)
+        {
+            return Err(AppError::new(
+                "https_setup_required",
+                "Set up HTTPS and trust its certificate before finishing setup.",
+            ));
+        }
+        Ok(())
+    }
 }
 
 struct Model {
@@ -127,13 +173,15 @@ impl AppController {
             .into_iter()
             .map(|id| {
                 let saved = model.settings.providers.iter().find(|p| p.id == id);
+                let endpoint =
+                    saved.or_else(|| model.settings.provider_drafts.iter().find(|p| p.id == id));
                 let key_state =
                     model.key_states.get(&id).cloned().unwrap_or_else(|| {
                         if saved.is_some() { "saved" } else { "missing" }.into()
                     });
                 ProviderStatus {
                     id,
-                    upstream_base_url: saved.map_or_else(
+                    upstream_base_url: endpoint.map_or_else(
                         || id.default_endpoint().to_owned(),
                         |p| p.upstream_base_url.clone(),
                     ),
@@ -169,7 +217,77 @@ impl AppController {
             last_error: model.last_error.clone(),
             diagnostics: model.diagnostics.iter().rev().cloned().collect(),
             settings_need_reset: model.settings_need_reset,
+            onboarding_complete: model.settings.onboarding_complete,
+            onboarding_skipped: model.settings.onboarding_skipped,
         }
+    }
+
+    pub async fn complete_onboarding(&self) -> Result<AppStatus, AppError> {
+        let _operation = self.operations.lock().await;
+        let status = self.status().await;
+        status.validate_onboarding_prerequisites()?;
+        let https_running = self
+            .model
+            .lock()
+            .await
+            .proxy
+            .as_ref()
+            .is_some_and(|proxy| proxy.https_port() == Some(status.https_port));
+        if !matches!(status.phase, Phase::Running)
+            || !https_running
+            || !status
+                .providers
+                .iter()
+                .any(|provider| provider.credential_state == "available")
+        {
+            return Err(AppError::new(
+                "proxy_not_running",
+                "Start the proxy with an accessible provider key before finishing setup.",
+            ));
+        }
+        let mut settings = self.editable_settings().await?;
+        settings.onboarding_complete = true;
+        settings.onboarding_skipped = false;
+        self.persist(settings.clone()).await?;
+        self.model.lock().await.settings = settings;
+        self.publish().await;
+        Ok(self.status().await)
+    }
+
+    pub async fn skip_onboarding(
+        &self,
+        draft: Option<ProviderDraft>,
+    ) -> Result<AppStatus, AppError> {
+        let _operation = self.operations.lock().await;
+        let mut settings = self.editable_settings().await?;
+        if settings.onboarding_complete {
+            return Ok(self.status().await);
+        }
+        if let Some(draft) = draft {
+            if settings
+                .providers
+                .iter()
+                .any(|provider| provider.id == draft.id)
+            {
+                return Err(AppError::new("provider_changed", "This provider already has a saved key. Save its provider settings, then retry skipping setup."));
+            }
+            let endpoint = proxy_core::validate_endpoint(&draft.upstream_base_url)?
+                .to_string()
+                .trim_end_matches('/')
+                .to_owned();
+            settings
+                .provider_drafts
+                .retain(|provider| provider.id != draft.id);
+            settings.provider_drafts.push(SavedProvider {
+                id: draft.id,
+                upstream_base_url: endpoint,
+            });
+        }
+        settings.onboarding_skipped = true;
+        self.persist(settings.clone()).await?;
+        self.model.lock().await.settings = settings;
+        self.publish().await;
+        Ok(self.status().await)
     }
 
     async fn publish(&self) {
@@ -258,6 +376,30 @@ impl AppController {
 
     pub async fn start(&self) -> Result<AppStatus, AppError> {
         let _operation = self.operations.lock().await;
+        self.start_inner().await
+    }
+
+    pub async fn start_after_skip(&self) -> Result<AppStatus, AppError> {
+        let _operation = self.operations.lock().await;
+        let mut settings = self.editable_settings().await?;
+        if !settings.onboarding_skipped {
+            return Err(AppError::new(
+                "setup_not_skipped",
+                "Complete guided setup or choose Skip setup before starting from settings.",
+            ));
+        }
+        self.start_inner().await?;
+        // An explicit Start from settings opts into normal operation/autostart.
+        // Guided completion still uses Start + CompleteOnboarding and verifies HTTPS/startup.
+        settings.onboarding_complete = true;
+        settings.onboarding_skipped = false;
+        self.persist(settings.clone()).await?;
+        self.model.lock().await.settings = settings;
+        self.publish().await;
+        Ok(self.status().await)
+    }
+
+    async fn start_inner(&self) -> Result<AppStatus, AppError> {
         let settings = self.editable_settings().await?;
         let browser_origins = BrowserOrigins::new(&settings.browser_origins)?;
         if self.model.lock().await.proxy.is_some() {
@@ -376,6 +518,9 @@ impl AppController {
             blocking(move || credentials.save_provider(id, key)).await?;
         }
         settings.providers.retain(|provider| provider.id != id);
+        settings
+            .provider_drafts
+            .retain(|provider| provider.id != id);
         settings.providers.push(SavedProvider {
             id,
             upstream_base_url: endpoint,
@@ -412,6 +557,9 @@ impl AppController {
         })
         .await?;
         settings.providers.retain(|provider| provider.id != id);
+        settings
+            .provider_drafts
+            .retain(|provider| provider.id != id);
         if let Err(error) = self.persist(settings.clone()).await {
             if let Some(key) = previous {
                 let credentials = self.credentials.clone();
@@ -745,6 +893,326 @@ mod tests {
         sync::Notify,
         time::timeout,
     };
+
+    fn setup_controller(directory: &std::path::Path, settings: Settings) -> AppController {
+        let (changes, _) = watch::channel(());
+        // These tests use temporary settings/model fixtures and never access native secrets/trust.
+        AppController::new(
+            changes,
+            SettingsStore::new(directory.join("settings.json")),
+            Ok(settings),
+            CredentialStore::new().expect("native adapter"),
+            CertificateStore::new(directory.join("https.json")),
+        )
+    }
+
+    #[tokio::test]
+    async fn skipping_keeps_saved_provider_and_https_progress_without_starting_or_finishing_setup()
+    {
+        let directory = tempfile::tempdir().expect("isolated settings");
+        let mut settings = Settings {
+            https_enabled: true,
+            ..Settings::default()
+        };
+        settings.providers.push(SavedProvider {
+            id: Provider::Openai,
+            upstream_base_url: "https://example.com/v1".into(),
+        });
+        let controller = setup_controller(directory.path(), settings);
+        controller.model.lock().await.certificate = CertificateStatus {
+            configured: true,
+            trusted: false,
+            expires_at: Some(i64::MAX),
+            fingerprint: Some("fixture".into()),
+        };
+        let status = controller
+            .skip_onboarding(None)
+            .await
+            .expect("skip without native setup");
+        assert!(status.onboarding_skipped);
+        assert!(!status.onboarding_complete);
+        assert!(matches!(status.phase, Phase::Stopped));
+        assert_eq!(
+            status.providers[1].upstream_base_url,
+            "https://example.com/v1"
+        );
+        assert!(status.providers[1].has_key);
+        assert!(status.certificate.configured);
+        assert!(!status.certificate.trusted);
+        let saved = SettingsStore::new(directory.path().join("settings.json"))
+            .load()
+            .expect("reload")
+            .expect("saved");
+        assert!(saved.onboarding_skipped);
+        assert!(!saved.should_start_automatically());
+        assert!(crate::onboarding_pending(directory.path()).expect("enrollment still deferred"));
+        let reopened = setup_controller(directory.path(), saved).status().await;
+        assert!(reopened.onboarding_skipped);
+        assert!(!reopened.onboarding_complete);
+    }
+
+    #[tokio::test]
+    async fn endpoint_only_skip_survives_reopen_without_claiming_a_saved_key() {
+        let directory = tempfile::tempdir().expect("isolated endpoint draft");
+        let controller = setup_controller(directory.path(), Settings::default());
+        let status = controller
+            .skip_onboarding(Some(ProviderDraft {
+                id: Provider::Claude,
+                upstream_base_url: "https://example.com/gateway/".into(),
+            }))
+            .await
+            .expect("save endpoint without credential access");
+        assert_eq!(
+            status.providers[0].upstream_base_url,
+            "https://example.com/gateway"
+        );
+        assert!(!status.providers[0].has_key);
+        assert_eq!(status.providers[0].credential_state, "missing");
+        let store = SettingsStore::new(directory.path().join("settings.json"));
+        let saved = store.load().expect("reload").expect("draft settings");
+        assert!(saved.providers.is_empty());
+        assert!(!saved.should_start_automatically());
+        let reopened = setup_controller(directory.path(), saved).status().await;
+        assert_eq!(
+            reopened.providers[0].upstream_base_url,
+            "https://example.com/gateway"
+        );
+        assert!(!reopened.providers[0].has_key);
+        assert!(reopened.onboarding_skipped);
+        assert!(
+            !std::fs::read_to_string(directory.path().join("settings.json"))
+                .expect("nonsecret settings")
+                .contains("apiKey")
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_details_or_persistence_failure_leave_setup_pending_and_preserve_previous_settings(
+    ) {
+        let directory = tempfile::tempdir().expect("isolated invalid draft");
+        let controller = setup_controller(directory.path(), Settings::default());
+        assert!(controller
+            .skip_onboarding(Some(ProviderDraft {
+                id: Provider::Claude,
+                upstream_base_url: "https://example.com?secret=invalid".into()
+            }))
+            .await
+            .is_err());
+        assert!(!controller.status().await.onboarding_skipped);
+        let path = directory.path().join("settings.json");
+        assert!(!path.exists());
+        std::fs::create_dir(&path).expect("block settings replacement");
+        assert!(controller.skip_onboarding(None).await.is_err());
+        assert!(!controller.status().await.onboarding_skipped);
+        assert!(path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn only_explicit_start_after_skip_enables_normal_operation_without_requiring_https() {
+        let directory = tempfile::tempdir().expect("isolated manual setup");
+        let controller = setup_controller(directory.path(), Settings::default());
+        assert_eq!(
+            controller
+                .start_after_skip()
+                .await
+                .err()
+                .expect("skip required")
+                .code,
+            "setup_not_skipped"
+        );
+        controller
+            .skip_onboarding(None)
+            .await
+            .expect("skip empty setup");
+        assert_eq!(
+            controller
+                .start_after_skip()
+                .await
+                .err()
+                .expect("key still required")
+                .code,
+            "no_providers"
+        );
+        assert!(controller.status().await.onboarding_skipped);
+        // Simulate a worker already serving an HTTP fixture (for example after a pending
+        // guided attempt). No keychain operation or HTTPS trust is needed for this path.
+        let proxy = RunningProxy::start(ProxyOptions {
+            port: 0,
+            https: None,
+            browser_origins: BrowserOrigins::default(),
+            upstreams: vec![Upstream::new(
+                Provider::Claude,
+                "https://example.com",
+                Secret::new("fake-key".into()).expect("fixture key"),
+            )
+            .expect("fixture upstream")],
+            limits: Limits::default(),
+        })
+        .await
+        .expect("fixture listener");
+        {
+            let mut model = controller.model.lock().await;
+            model.settings.providers.push(SavedProvider {
+                id: Provider::Claude,
+                upstream_base_url: "https://example.com".into(),
+            });
+            model.proxy = Some(proxy);
+            model.phase = Phase::Running;
+            model
+                .key_states
+                .insert(Provider::Claude, "available".into());
+        }
+        assert!(
+            !controller
+                .start()
+                .await
+                .expect("guided Start does not bypass completion")
+                .onboarding_complete
+        );
+        assert!(
+            controller.complete_onboarding().await.is_err(),
+            "guided completion still requires trusted HTTPS"
+        );
+        let status = controller
+            .start_after_skip()
+            .await
+            .expect("explicit manual start");
+        assert!(status.onboarding_complete);
+        assert!(!status.onboarding_skipped);
+        assert!(!status.https_enabled);
+        assert!(SettingsStore::new(directory.path().join("settings.json"))
+            .load()
+            .expect("reload")
+            .expect("normal setup")
+            .should_start_automatically());
+        controller.stop().await.expect("release listener");
+    }
+
+    #[tokio::test]
+    async fn onboarding_completes_only_with_trusted_https_and_an_available_running_provider() {
+        let directory = tempfile::tempdir().expect("isolated onboarding");
+        let store = SettingsStore::new(directory.path().join("settings.json"));
+        let (changes, _) = watch::channel(());
+        // No native secrets/trust are accessed. Model trust is a simulated OS result.
+        let controller = AppController::new(
+            changes,
+            store.clone(),
+            Ok(Settings::default()),
+            CredentialStore::new().expect("native adapter"),
+            CertificateStore::new(directory.path().join("https.json")),
+        );
+        assert_eq!(
+            controller
+                .complete_onboarding()
+                .await
+                .err()
+                .expect("no key")
+                .code,
+            "missing_key"
+        );
+        {
+            let mut model = controller.model.lock().await;
+            model.settings.providers.push(SavedProvider {
+                id: Provider::Claude,
+                upstream_base_url: Provider::Claude.default_endpoint().into(),
+            });
+            model.settings.https_enabled = true;
+            model.certificate.configured = true;
+            model.certificate.expires_at = Some(i64::MAX);
+        }
+        assert_eq!(
+            controller
+                .complete_onboarding()
+                .await
+                .err()
+                .expect("untrusted")
+                .code,
+            "https_setup_required"
+        );
+        controller.model.lock().await.certificate.trusted = true;
+        assert_eq!(
+            controller
+                .complete_onboarding()
+                .await
+                .err()
+                .expect("not running")
+                .code,
+            "proxy_not_running"
+        );
+
+        let key = rcgen::KeyPair::generate().expect("ephemeral TLS key");
+        let certificate = rcgen::CertificateParams::new(vec!["localhost".into()])
+            .expect("certificate names")
+            .self_signed(&key)
+            .expect("ephemeral certificate");
+        let proxy = RunningProxy::start(ProxyOptions {
+            port: 0,
+            https: Some(HttpsOptions {
+                port: 0,
+                identity: proxy_core::TlsIdentity::new(
+                    vec![certificate.der().to_vec()],
+                    Zeroizing::new(key.serialize_der()),
+                )
+                .expect("TLS identity"),
+            }),
+            browser_origins: BrowserOrigins::default(),
+            upstreams: vec![Upstream::new(
+                Provider::Claude,
+                "https://example.com",
+                Secret::new("fake-key".into()).expect("fake credential"),
+            )
+            .expect("fixture upstream")],
+            limits: Limits::default(),
+        })
+        .await
+        .expect("isolated HTTPS proxy");
+        {
+            let mut model = controller.model.lock().await;
+            model.settings.local_port = proxy.port();
+            model.settings.https_port = proxy.https_port().expect("HTTPS listener");
+            model.proxy = Some(proxy);
+            model.phase = Phase::Running;
+            model.key_states.insert(Provider::Claude, "locked".into());
+        }
+        assert_eq!(
+            controller
+                .complete_onboarding()
+                .await
+                .err()
+                .expect("locked credential")
+                .code,
+            "proxy_not_running"
+        );
+        assert!(store.load().expect("not persisted").is_none());
+        controller
+            .model
+            .lock()
+            .await
+            .key_states
+            .insert(Provider::Claude, "available".into());
+        controller.model.lock().await.certificate.expires_at = Some(1);
+        assert_eq!(
+            controller
+                .complete_onboarding()
+                .await
+                .err()
+                .expect("expired certificate")
+                .code,
+            "https_setup_required"
+        );
+        controller.model.lock().await.certificate.expires_at = Some(i64::MAX);
+        let completed = controller
+            .complete_onboarding()
+            .await
+            .expect("complete setup");
+        assert!(completed.onboarding_complete);
+        assert!(store
+            .load()
+            .expect("reload")
+            .expect("saved settings")
+            .should_start_automatically());
+        controller.stop().await.expect("release fixture listeners");
+    }
 
     #[tokio::test]
     async fn closing_settings_preserves_forwarding_and_explicit_stop_releases_the_port() {

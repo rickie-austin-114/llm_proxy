@@ -24,6 +24,8 @@ export interface Diagnostic {
 }
 
 export interface AppStatus {
+  onboardingComplete: boolean;
+  onboardingSkipped: boolean;
   platform: string;
   phase: ProxyPhase;
   localPort: number;
@@ -41,4 +43,9 @@ export interface AppStatus {
   lastError: AppError | null;
   diagnostics: Diagnostic[];
   settingsNeedReset: boolean;
+}
+
+export interface ProviderDraft {
+  id: ProviderId;
+  upstreamBaseUrl: string;
 }

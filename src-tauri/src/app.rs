@@ -36,9 +36,9 @@ impl AppController {
         }
     }
 
-    async fn registration(&self, new_setup: bool) {
+    async fn registration(&self, intent: startup::Intent) {
         let directory = self.directory.clone();
-        match blocking(move || startup::needs_worker_handoff(&directory, new_setup)).await {
+        match blocking(move || startup::needs_worker_handoff(&directory, intent)).await {
             Ok(true) => {
                 if let Err(error) = proxy_service::stop_worker().await {
                     *self.startup_error.lock().await = Some(error);
@@ -54,7 +54,7 @@ impl AppController {
         let directory = self.directory.clone();
         let result = blocking(move || {
             let worker = startup::worker_path()?;
-            startup::initialize(&directory, &worker, new_setup)
+            startup::initialize(&directory, &worker, intent)
         })
         .await;
         match result {
@@ -63,7 +63,12 @@ impl AppController {
                 *self.startup_error.lock().await = None;
             }
             Err(error) => {
-                *self.startup_state.lock().await = "unavailable".into();
+                *self.startup_state.lock().await = if error.code == "startup_approval_required" {
+                    "approval_required"
+                } else {
+                    "unavailable"
+                }
+                .into();
                 *self.startup_error.lock().await = Some(error);
             }
         }
@@ -72,15 +77,16 @@ impl AppController {
     async fn connect(&self) -> Result<(), AppError> {
         self.initialized
             .get_or_init(|| async {
-                self.registration(false).await;
+                self.registration(startup::Intent::Inspect).await;
             })
             .await;
         let _connection = self.connection.lock().await;
         let expected =
             blocking(|| proxy_service::binary_fingerprint(&startup::worker_path()?)).await?;
         let state = self.startup_state.lock().await.clone();
+        let requires_managed = state == "enabled";
         if let Ok(response) = ipc::call(Request::Identity).await {
-            if matches!(&response, Response::Identity { fingerprint, managed, .. } if *fingerprint == expected && (state != "enabled" || *managed))
+            if matches!(&response, Response::Identity { fingerprint, managed, .. } if *fingerprint == expected && (!requires_managed || *managed))
             {
                 return Ok(());
             }
@@ -90,7 +96,7 @@ impl AppController {
         blocking(move || startup::launch(&startup::worker_path()?, &state)).await?;
         for attempt in 0..40 {
             if let Ok(response) = ipc::call(Request::Identity).await {
-                if matches!(&response, Response::Identity { fingerprint, .. } if *fingerprint == expected)
+                if matches!(&response, Response::Identity { fingerprint, managed, .. } if *fingerprint == expected && (!requires_managed || *managed))
                 {
                     return Ok(());
                 }
@@ -133,11 +139,68 @@ impl AppController {
         let _operation = self.operations.lock().await;
         self.status_command(Request::Status).await
     }
+
+    pub async fn check_background_startup(&self) -> Result<AppStatus, AppError> {
+        let _operation = self.operations.lock().await;
+        // This is an explicit retry. Ordinary status reads keep using the cached registration
+        // state, avoiding repeated OS registration attempts or settings prompts.
+        // Wait for an in-flight first inspection, or initialize before this repair.
+        // The explicit retry must still run when the subscription won the initialization race.
+        self.initialized
+            .get_or_init(|| async { self.registration(startup::Intent::Inspect).await })
+            .await;
+        self.registration(startup::Intent::Repair).await;
+        self.status_command(Request::Status).await
+    }
+
     pub async fn start(&self) -> Result<AppStatus, AppError> {
         let _operation = self.operations.lock().await;
+        let status = self.status_command(Request::Status).await?;
+        if !status.onboarding_complete && !status.onboarding_skipped {
+            return self.finish_onboarding_inner().await;
+        }
         self.connect().await?;
-        self.registration(true).await;
-        self.status_command(Request::Start).await
+        self.registration(if status.onboarding_skipped {
+            startup::Intent::Enroll
+        } else {
+            startup::Intent::Inspect
+        })
+        .await;
+        self.status_command(if status.onboarding_skipped {
+            Request::StartAfterSkip
+        } else {
+            Request::Start
+        })
+        .await
+    }
+
+    pub async fn skip_onboarding(
+        &self,
+        draft: Option<proxy_service::app::ProviderDraft>,
+    ) -> Result<AppStatus, AppError> {
+        let _operation = self.operations.lock().await;
+        self.status_command(Request::SkipOnboarding { draft }).await
+    }
+
+    pub async fn finish_onboarding(&self) -> Result<AppStatus, AppError> {
+        let _operation = self.operations.lock().await;
+        self.finish_onboarding_inner().await
+    }
+
+    async fn finish_onboarding_inner(&self) -> Result<AppStatus, AppError> {
+        let status = self.status_command(Request::CheckHttps).await?;
+        status.validate_onboarding_prerequisites()?;
+        self.registration(startup::Intent::Enroll).await;
+        let status = self.status_command(Request::Start).await?;
+        if matches!(
+            status.background_startup.as_str(),
+            "enabled" | "development"
+        ) {
+            self.status_command(Request::CompleteOnboarding).await
+        } else {
+            // Keep the final step resumable while the OS requires approval or repair.
+            Ok(status)
+        }
     }
     pub async fn stop(&self) -> Result<AppStatus, AppError> {
         let _operation = self.operations.lock().await;
@@ -150,14 +213,16 @@ impl AppController {
         api_key: Option<String>,
     ) -> Result<AppStatus, AppError> {
         let _operation = self.operations.lock().await;
-        let _ = self
+        let status = self
             .status_command(Request::SaveProvider {
                 id,
                 endpoint,
                 api_key,
             })
             .await?;
-        self.registration(true).await;
+        if status.onboarding_complete {
+            self.registration(startup::Intent::Inspect).await;
+        }
         self.status_command(Request::Status).await
     }
     pub async fn delete_provider(&self, id: Provider) -> Result<AppStatus, AppError> {

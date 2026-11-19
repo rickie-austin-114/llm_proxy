@@ -29,6 +29,21 @@ pub async fn get_status(
 }
 
 #[tauri::command]
+pub async fn check_background_startup(
+    window: WebviewWindow,
+    controller: State<'_, Arc<AppController>>,
+) -> Result<AppStatus, AppError> {
+    authorize(&window)?;
+    controller.check_background_startup().await
+}
+
+#[tauri::command]
+pub async fn open_startup_settings(window: WebviewWindow) -> Result<(), AppError> {
+    authorize(&window)?;
+    blocking(crate::startup::open_settings).await
+}
+
+#[tauri::command]
 pub async fn save_provider(
     window: WebviewWindow,
     controller: State<'_, Arc<AppController>>,
@@ -64,6 +79,25 @@ pub async fn test_connection(
     controller
         .test_connection(id, upstream_base_url, api_key)
         .await
+}
+
+#[tauri::command]
+pub async fn finish_onboarding(
+    window: WebviewWindow,
+    controller: State<'_, Arc<AppController>>,
+) -> Result<AppStatus, AppError> {
+    authorize(&window)?;
+    controller.finish_onboarding().await
+}
+
+#[tauri::command]
+pub async fn skip_onboarding(
+    window: WebviewWindow,
+    controller: State<'_, Arc<AppController>>,
+    draft: Option<proxy_service::app::ProviderDraft>,
+) -> Result<AppStatus, AppError> {
+    authorize(&window)?;
+    controller.skip_onboarding(draft).await
 }
 
 #[tauri::command]

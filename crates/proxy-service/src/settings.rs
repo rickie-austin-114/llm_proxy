@@ -24,9 +24,15 @@ pub struct Settings {
     #[serde(default = "default_https_port")]
     pub https_port: u16,
     pub start_at_login: bool,
+    #[serde(default = "legacy_onboarding_complete")]
+    pub onboarding_complete: bool,
+    #[serde(default)]
+    pub onboarding_skipped: bool,
     #[serde(default = "default_browser_origins")]
     pub browser_origins: Vec<String>,
     pub providers: Vec<SavedProvider>,
+    #[serde(default)]
+    pub provider_drafts: Vec<SavedProvider>,
 }
 
 impl Default for Settings {
@@ -37,13 +43,20 @@ impl Default for Settings {
             https_enabled: false,
             https_port: default_https_port(),
             start_at_login: true,
+            onboarding_complete: false,
+            onboarding_skipped: false,
             browser_origins: default_browser_origins(),
             providers: Vec::new(),
+            provider_drafts: Vec::new(),
         }
     }
 }
 
 impl Settings {
+    pub fn should_start_automatically(&self) -> bool {
+        self.onboarding_complete && !self.providers.is_empty()
+    }
+
     pub fn validate(&self) -> Result<(), AppError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(AppError::new("unsupported_settings", "These settings were created by a different app version. Restore a compatible version or reset settings."));
@@ -55,7 +68,7 @@ impl Settings {
         }
         BrowserOrigins::new(&self.browser_origins)?;
         let mut seen = Vec::new();
-        for provider in &self.providers {
+        for provider in self.providers.iter().chain(&self.provider_drafts) {
             validate_endpoint(&provider.upstream_base_url)?;
             if seen.contains(&provider.id) {
                 return Err(AppError::new(
@@ -67,6 +80,11 @@ impl Settings {
         }
         Ok(())
     }
+}
+
+fn legacy_onboarding_complete() -> bool {
+    // Preserve the behavior of installations created before the first-run wizard.
+    true
 }
 
 fn default_browser_origins() -> Vec<String> {
@@ -194,6 +212,7 @@ mod tests {
             serde_json::from_str(existing).expect("previous settings schema");
         assert_eq!(settings.browser_origins, default_browser_origins());
         assert!(!settings.start_at_login);
+        assert!(settings.onboarding_complete);
         settings.browser_origins.clear();
         let directory = tempfile::tempdir().expect("temporary settings");
         let store = SettingsStore::new(directory.path().join("settings.json"));
@@ -250,5 +269,31 @@ mod tests {
                 .expect("deserialize");
         assert!(round_trip.https_enabled);
         assert_eq!(round_trip.https_port, 8789);
+    }
+
+    #[test]
+    fn partial_setup_persists_without_enabling_automatic_proxy_start() {
+        let directory = tempfile::tempdir().expect("isolated settings");
+        let store = SettingsStore::new(directory.path().join("settings.json"));
+        assert!(crate::onboarding_pending(directory.path()).expect("new setup"));
+        let mut settings = Settings::default();
+        assert!(!settings.should_start_automatically());
+        settings.providers.push(SavedProvider {
+            id: Provider::Openai,
+            upstream_base_url: Provider::Openai.default_endpoint().into(),
+        });
+        store.save(&settings).expect("save partial setup");
+        let reloaded = store.load().expect("resume").expect("saved settings");
+        assert!(!reloaded.onboarding_complete);
+        assert!(!reloaded.should_start_automatically());
+        settings.onboarding_complete = true;
+        store.save(&settings).expect("complete setup");
+        assert!(!crate::onboarding_pending(directory.path()).expect("completed setup"));
+        assert!(store
+            .load()
+            .expect("reload")
+            .expect("settings")
+            .should_start_automatically());
+        assert!(!Settings::default().should_start_automatically());
     }
 }

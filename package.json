@@ -1,6 +1,6 @@
 {
   "name": "llm-proxy",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "worker:build": "node scripts/with-rust.mjs worker"
+    "worker:build": "node scripts/with-rust.mjs worker",
+    "verify:macos": "node scripts/verify-macos.mjs",
+    "test:packaging": "node --test scripts/verify-macos.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

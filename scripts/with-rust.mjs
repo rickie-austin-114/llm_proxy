@@ -4,6 +4,7 @@ import { delimiter, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { prepareWorker } from './prepare-worker.mjs';
+import { verifyMacOSBuild } from './verify-macos.mjs';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(import.meta.url);
@@ -94,7 +95,17 @@ try {
   });
   child.on('exit', (code, signal) => {
     if (signal) process.kill(process.pid, signal);
-    else process.exitCode = code ?? 1;
+    else {
+      process.exitCode = code ?? 1;
+      if (code === 0 && command === 'tauri') {
+        try {
+          verifyMacOSBuild(repoRoot, env, args);
+        } catch (error) {
+          console.error(`macOS package verification failed: ${error.message}`);
+          process.exitCode = 1;
+        }
+      }
+    }
   });
 } catch (error) {
   console.error(error.message);

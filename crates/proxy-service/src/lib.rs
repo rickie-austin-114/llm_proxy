@@ -62,6 +62,13 @@ pub fn config_dir() -> Result<PathBuf, AppError> {
         })
 }
 
+pub fn onboarding_pending(directory: &Path) -> Result<bool, AppError> {
+    Ok(!SettingsStore::new(directory.join("settings.json"))
+        .load()?
+        .unwrap_or_default()
+        .onboarding_complete)
+}
+
 /// Stop the worker and wait for process exit before an installer replaces its executable.
 pub async fn stop_worker() -> Result<(), AppError> {
     let response = match ipc::call(ipc::Request::Identity).await {
@@ -124,7 +131,7 @@ pub async fn run() -> Result<(), AppError> {
     let settings = store.load().map(Option::unwrap_or_default);
     let should_start = settings
         .as_ref()
-        .is_ok_and(|settings| !settings.providers.is_empty());
+        .is_ok_and(|settings| settings.should_start_automatically());
     let (changes, receiver) = watch::channel(());
     let controller = Arc::new(AppController::new(
         changes,

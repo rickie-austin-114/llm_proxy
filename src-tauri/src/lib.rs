@@ -44,10 +44,14 @@ pub fn run() {
         }))
         .invoke_handler(tauri::generate_handler![
             commands::get_status,
+            commands::check_background_startup,
+            commands::open_startup_settings,
             commands::save_provider,
             commands::delete_provider,
             commands::test_connection,
             commands::start_proxy,
+            commands::finish_onboarding,
+            commands::skip_onboarding,
             commands::stop_proxy,
             commands::set_local_port,
             commands::set_browser_origins,

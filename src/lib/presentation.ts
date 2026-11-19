@@ -26,6 +26,8 @@ export function parsePort(value: string): number | null {
 
 export function previewStatus(): AppStatus {
   return {
+    onboardingComplete: false,
+    onboardingSkipped: false,
     platform: 'preview',
     phase: 'stopped',
     localPort: 8787,

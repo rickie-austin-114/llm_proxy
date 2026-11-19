@@ -1,11 +1,16 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AppStatus, ProviderId } from './types';
+import type { AppStatus, ProviderDraft, ProviderId } from './types';
 
 export const isDesktop = isTauri;
 
 export const proxyClient = {
+  finishOnboarding: (): Promise<AppStatus> => invoke('finish_onboarding'),
+  skipOnboarding: (draft: ProviderDraft | null): Promise<AppStatus> =>
+    invoke('skip_onboarding', { draft }),
   getStatus: (): Promise<AppStatus> => invoke('get_status'),
+  checkBackgroundStartup: (): Promise<AppStatus> => invoke('check_background_startup'),
+  openStartupSettings: (): Promise<void> => invoke('open_startup_settings'),
   start: (): Promise<AppStatus> => invoke('start_proxy'),
   stop: (): Promise<AppStatus> => invoke('stop_proxy'),
   saveProvider: (

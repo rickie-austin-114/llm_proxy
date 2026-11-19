@@ -2,7 +2,7 @@
 
 Status: MVP requirements; implementation present, release acceptance pending
 
-Date: November 16, 2026
+Date: November 19, 2026
 
 ## 1. Purpose
 
@@ -46,16 +46,17 @@ Initial baselines are macOS 13+ and Windows 11 x64. Windows on ARM is outside th
 
 ## 4. First-run experience
 
-1. The user installs and opens the application.
-2. The user selects Claude or OpenAI.
-3. The user enters an API key and an upstream base URL. Provide editable defaults of `https://api.servicesessentials.ibm.com` for Claude and `https://api.servicesessentials.ibm.com/v1` for OpenAI.
-4. The user can test the configuration and receives a clear success or error message. Explain any potentially billable test before running it.
-5. The user saves the configuration and selects **Start Proxy**.
-6. The application displays the running status and a copyable local base URL. The client uses the same API key saved for that provider in the GUI.
-7. The user configures their API client with those values using the client's existing setup flow.
-8. Register automatic worker startup during setup so the saved proxy is available after subsequent reboots/sign-ins without launching the settings app. No Start at login checkbox is shown.
+1. Opening a new installation or resetting app data presents a three-step onboarding flow.
+2. **Provider key:** choose either Claude or OpenAI and save one API key. Editable endpoint defaults are `https://api.servicesessentials.ibm.com` for Claude and `https://api.servicesessentials.ibm.com/v1` for OpenAI. The second provider and optional non-generation connection test remain available in settings.
+3. **Trusted HTTPS:** a single **Set up HTTPS and trust certificate** action creates and trusts the localhost identity through the existing native OS flow. Verify enabled HTTPS, certificate validity, and current trust before advancing. Retain OS approval/password prompts; retry canceled trust against the saved valid certificate.
+4. **Background proxy:** explicitly start the proxy and enroll background startup. Show macOS permission guidance and direct navigation to Login Items settings when required, then allow a deliberate approval check/retry. Finish only after the HTTPS proxy is running with an available provider key and background startup is enabled. Development builds clearly disclose that OS startup registration is omitted.
+5. Display running status and copyable local URLs. Clients use the same API key saved for the selected provider. Closing settings preserves the worker; subsequent sign-in launches the worker without opening the GUI.
 
-All application steps must be available in the GUI. The app must distinguish a successful local startup from a successful upstream connection test.
+Persist completion and derive the current step from authoritative provider/certificate state, so interruption or denied approval can be resumed. Never persist the entered key in frontend storage. Do not automatically start proxy listeners or newly enroll background startup before the final step. Keep settings accessible for diagnostics/port conflicts, with a way to resume onboarding. Existing installations skip onboarding and retain their settings, HTTPS choices, and OS startup opt-outs. Reset starts onboarding again.
+
+All application steps must be available in the GUI. Distinguish local readiness from an upstream connection test; completing onboarding does not claim the provider accepts the key or that Office has connected.
+
+Offer **Skip setup** on every onboarding step. Before leaving, securely save a newly typed provider key and its endpoint, or preserve an endpoint-only edit as non-secret draft configuration without marking that provider as configured. Keep existing provider/certificate progress. If validation, credential storage, or settings persistence fails, leave setup open with unsaved input available for correction/retry. Remember dismissal across launches and offer **Resume setup**. Skipping alone must not create/trust certificates, start stopped listeners, or newly enroll startup. Users may instead save a provider in settings and explicitly **Start proxy**, using the current HTTP/HTTPS configuration and requesting background startup without requiring the guided HTTPS flow. A successful manual start accepts this settings-based configuration for future worker launches. Reset clears the skip preference and drafts and restores onboarding.
 
 ## 5. GUI requirements
 
@@ -73,7 +74,9 @@ All application steps must be available in the GUI. The app must distinguish a s
 - Show automatic background startup status and actionable OS permission guidance; remove the Start at login checkbox.
 - Keep Start Proxy / Stop Proxy controls in settings; reopen settings from Applications or the Windows Start menu.
 
-The headless worker runs independently of the settings app, with no resident GUI, tray, or webview dependency. Closing or quitting settings exits the GUI and leaves existing proxy requests running. Register the worker automatically on first opening the installed app and migrate the old GUI startup entry. On subsequent launches, preserve OS-disabled worker registration and show that state. OS approval prompts remain under user control.
+The headless worker runs independently of the settings app, with no resident GUI, tray, or webview dependency. Closing or quitting settings exits the GUI and leaves existing proxy requests running. Register a new worker during the final onboarding step and migrate the old GUI startup entry after enrollment. On subsequent launches, preserve OS-disabled worker registration and show that state. OS approval prompts remain under user control.
+
+On macOS, validate the app's bundled service files/configuration before registration. A service-not-found status must allow one deliberate registration attempt from the final onboarding action or **Check background startup** after onboarding, including when a previous enrollment marker exists. Ordinary inspection must not repeatedly attempt repair. Verify enabled/pending-approval status before saving enrollment; preserve useful native errors if repair fails. A check must not undo reset, bypass incomplete onboarding, or reenable existing OS-disabled enrollment.
 
 Startup occurs after user sign-in, using native per-user credentials/trust. Running before sign-in is outside scope. Locked credentials produce actionable diagnostics without plaintext fallback or repeated prompts. Reset/pre-uninstall removes credentials/trust and worker registration, stops the worker, and leaves automatic startup disabled until an explicit new setup. Stop Proxy closes listeners until Start or a subsequent worker launch/sign-in. Uninstall must stop the worker and remove registration.
 
@@ -96,8 +99,8 @@ MVP assumption: the proxy preserves each provider's protocol. Translating OpenAI
 ### 6.2 Local server behavior
 
 - Bind only to loopback interfaces. Remote devices must not be able to connect.
-- Use a localhost HTTP address; local HTTPS certificates must not be required for basic setup.
-- Provide optional localhost HTTPS for Claude for Office on a separate configurable port, default 8788. Generate a unique device certificate, store its private key in the OS credential store, and provide graphical trust, trust checking, renewal, and removal without terminal commands. A single **Set up HTTPS and trust certificate** action creates the identity, requests current-user trust, and verifies it; retain required OS approval prompts. Retry denied trust using the saved certificate rather than generating a replacement. Renewal also includes trust after confirming replacement. Preserve existing HTTP client URLs. Reset/pre-uninstall removes the app's HTTPS trust and private key.
+- Keep localhost HTTP available for compatible native clients; new-user onboarding also sets up trusted HTTPS for Office. Preserve HTTP-only configurations on upgrade.
+- Provide localhost HTTPS for Claude for Office, included in new-user onboarding and optional for existing installations, on a separate configurable port, default 8788. Generate a unique device certificate, store its private key in the OS credential store, and provide graphical trust, trust checking, renewal, and removal without terminal commands. A single **Set up HTTPS and trust certificate** action creates the identity, requests current-user trust, and verifies it; retain required OS approval prompts. Retry denied trust using the saved certificate rather than generating a replacement. Renewal also includes trust after confirming replacement. Preserve existing HTTP client URLs. Reset/pre-uninstall removes the app's HTTPS trust and private key.
 - Handle IPv4 and IPv6 loopback consistently where supported, and display an address that is actually reachable.
 - Detect port conflicts and allow users to choose another port through the GUI.
 - Keep provider routing unambiguous when both providers are configured.
@@ -158,8 +161,10 @@ The background memory limit is a required budget. Other performance figures belo
 9. Stop Proxy releases the listening port; closing or quitting settings preserves proxy availability and active requests.
 10. Release artifacts and runtime measurements are checked on all supported architectures against the agreed installation and lightweight-operation requirements.
 11. Reboot/sign-in launches only the registered worker and makes the configured proxy available without a settings window. OS-disabled worker startup is respected on subsequent launches.
+    When macOS requires background-item approval after onboarding, opening settings prompts once per session and offers direct navigation to Login Items settings. Users can defer and later check/retry from the GUI. Permission, installation, and signing failures must have distinct guidance; the app must not bypass OS approval or display setup prompts from the headless worker.
 12. Background operation remains below 200 MB combined RAM across app and helper processes under the defined idle and representative forwarding checks; results also report progress toward the ideal of below 100 MB. Repeatedly opening and closing the GUI must not cause sustained memory growth.
-13. Closing/quitting settings exits its processes while preserving the worker. Reset/pre-uninstall removes startup registration and stops the worker; graphical installation bundles both executables.
+13. New installations complete the three-step provider → trusted HTTPS → running background proxy flow, resume after cancellation/relaunch, and do not start automatically during partial setup. Existing installations bypass the wizard.
+14. Closing/quitting settings exits its processes while preserving the worker. Reset/pre-uninstall removes startup registration and stops the worker; graphical installation bundles both executables.
 
 ## 10. Outside the initial scope
 

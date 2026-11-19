@@ -10,17 +10,17 @@
 
 ## Install and configure
 
-Follow the installation and HTTPS steps below for v0.2.1. The [older Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) includes PowerPoint screenshots, but shows the previous two-button HTTPS setup and tray lifecycle.
+The v0.2.2 preview adds the first-run wizard described below, optional setup dismissal, background-startup recovery, and verified macOS bundle signing. The [older Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) includes PowerPoint screenshots, but shows the previous two-button HTTPS setup and tray lifecycle.
 
-Download the **ICA proxy v0.2.1 preview** installer for your computer:
+Download the **ICA proxy v0.2.2 preview** installer for your computer:
 
 | Computer                 | Download                                                                                                                            |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.1/ICA-Proxy-0.2.1-macOS-Apple-Silicon.dmg)     |
-| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.1/ICA-Proxy-0.2.1-macOS-Intel.dmg)             |
-| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.1/ICA-Proxy-0.2.1-Windows-x64-Setup.exe) |
+| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.2/ICA-Proxy-0.2.2-macOS-Apple-Silicon.dmg)     |
+| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.2/ICA-Proxy-0.2.2-macOS-Intel.dmg)             |
+| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.2/ICA-Proxy-0.2.2-Windows-x64-Setup.exe) |
 
-These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.2.1) for limitations and checksums.
+These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.2.2) for limitations and checksums.
 
 The intended graphical installation is:
 
@@ -29,14 +29,24 @@ The intended graphical installation is:
 
 End users do not need Node.js, Rust, a package manager, or a terminal.
 
-1. Open **ICA proxy** and enter a Claude or OpenAI API key. Both providers can be configured together.
-2. Keep the default upstream URL or enter your compatible gateway's base URL. OpenAI URLs include the API prefix (normally `/v1`); Claude URLs use the service root.
-3. Optionally select **Test connection**. This lists models; it does not generate tokens or save your input.
-4. Select **Save settings**, then **Start proxy**.
-5. Copy the appropriate local base URL into your client. Use the **same API key** you saved for that provider in the app.
-6. Background startup is configured automatically. After reboot/sign-in, only the proxy worker starts; the settings app stays closed. There is no Start at login checkbox.
+1. Open **ICA proxy**. The first-run wizard starts automatically on a new installation or after resetting app data.
+2. **Provider key:** choose Claude or OpenAI, paste your API key, and select **Save key and continue**. Keep the default endpoint, or expand **Provider endpoint** to change it. One provider is sufficient; add the other or test its connection in settings later.
+3. **Trusted HTTPS:** select **Set up HTTPS and trust certificate** and approve the operating system prompt. The wizard verifies trust before continuing. If approval is canceled, retry with the saved certificate.
+4. **Background proxy:** select **Start proxy and enable background startup**. If macOS needs approval, select **Open Login Items settings**, enable ICA proxy under **Allow in the Background**, return, and select **Check approval and finish setup**. The proxy can run during this sign-in while approval is pending; setup finishes only after background startup is enabled.
+5. Copy the local HTTPS URL from settings into your API client, using the **same API key** saved for that provider. Claude for Office uses `https://localhost:8788/claude` by default.
+6. Close settings. After reboot/sign-in, only the proxy worker starts. There is no Start at login checkbox.
+
+Setup resumes from saved progress if interrupted. **Open settings** provides access to ports and diagnostics; **Resume setup** returns to the wizard. Saving a key alone does not enroll a new installation for background startup or start its listeners. Existing installations retain their settings and skip the wizard. HTTPS remains optional in normal settings for those installations; new onboarding includes it. Developer builds clearly report that they do not register background startup.
+
+Select **Skip setup** at any step to save your entered details and open settings. A typed key is saved in the OS credential store before leaving; an endpoint-only edit is retained without pretending a key is configured. If saving fails, setup stays open so you can retry. Previously saved keys and certificate progress are retained. Skipping stays remembered after reopening, and **Resume setup** lets you return. It does not create/trust a certificate, start a stopped proxy, or newly enable background startup. From settings, save a key and choose **Start proxy** when ready to run with your current configuration and request background startup; HTTPS can be configured later.
 
 Close or quit settings to leave the proxy and active requests running. Open **ICA proxy** from Applications or the Windows Start menu to return to settings. **Stop proxy** stops requests until you select Start or the worker starts again after sign-in. Background startup status appears under **Background & startup**. macOS may require approval in System Settings → General → Login Items & Extensions; subsequent OS-disabled worker registration is respected.
+
+After onboarding, if macOS reports that background startup needs approval, opening settings shows an **Allow background startup** prompt. Select **Open Login Items settings**, enable ICA proxy under **Allow in the Background**, then return and select **Check background startup**. You can choose **Later** and use the buttons under **Background & startup** when ready. The prompt appears at most once per settings session; sign-in still launches only the worker. macOS controls approval, so the app cannot grant it or force a native Allow dialog.
+
+**Check background startup** also retries a failed registration without reopening the app. If macOS cannot find the service, the app validates its bundled files, attempts registration once, and checks the result, even if it was registered previously. During incomplete onboarding, use the final setup step to register/retry. Checks preserve OS-disabled startup and the reset preference. If the proxy is running, the app asks before checking because handing the worker over to the OS can interrupt requests. Installation, missing-service, and signing failures have separate guidance and safe error codes; a signing failure requires a repaired app build, rather than more permission. If registration still fails, share the displayed error code with the app publisher. On Windows, the existing per-user task needs no administrator prompt; managed-device restrictions may require IT assistance.
+
+If macOS reports **SMAppService error 3**, quit ICA proxy and replace the entire app in Applications with a newly verified installer from the publisher. Reopen the Applications copy and retry background startup. Resetting settings or granting background permission cannot repair a damaged signature. Keep saved settings during this repair; do not use **Reset data / prepare to uninstall**. Older builds made without an explicit signing identity can contain only an incomplete linker signature. The source now defaults to full ad-hoc development signing and checks packaged app/worker signatures, but a preview's native background-startup compatibility still requires testing.
 
 When upgrading from llm_proxy to ICA proxy, quit the old app first. On Mac, install ICA proxy in Applications and remove the old llm_proxy app after confirming the new app works. On Windows, uninstall llm_proxy through Installed apps before installing ICA proxy, because the new product name uses a different installation directory. To keep your provider keys, settings, and HTTPS identity, skip **Reset data / prepare to uninstall** during this rename upgrade.
 
@@ -54,7 +64,7 @@ Open settings and select **Check saved-key access** after saving your provider k
 
 The default local port is `8787`, configurable while the proxy is stopped.
 
-For Claude for Office, set up HTTPS as described below and use `https://localhost:8788/claude`. HTTPS is optional and uses a separate port so existing HTTP clients can keep their current URLs.
+For Claude for Office, set up HTTPS as described below and use `https://localhost:8788/claude`. New onboarding includes HTTPS; it remains optional in normal settings and uses a separate port so existing HTTP clients can keep their current URLs.
 
 | Client protocol    | Local base URL                    | Upstream default                            |
 | ------------------ | --------------------------------- | ------------------------------------------- |
@@ -82,7 +92,7 @@ Office's gateway URL must use HTTPS. To enable the app's local HTTPS listener wi
 
 The OpenAI HTTPS URL is `https://localhost:8788/openai/v1`. The certificate also covers `127.0.0.1` and `::1`. HTTPS has the same CORS rules, authentication, streaming, and request budget as HTTP. Merely changing the scheme on the HTTP port does not enable TLS; use the displayed HTTPS URL and port.
 
-The certificate lasts one year; its expiration and root fingerprint are shown in settings. **Renew HTTPS and trust certificate** confirms replacement while stopped, removes old trust, and requests trust for the replacement in the same action. Restart Office afterward. **Remove HTTPS** removes this identity's trust, public metadata, and private key. **Check certificate trust** refreshes status after an OS trust change. Certificate setup is opt-in and saved for later starts, including login startup; trust is never silently installed in the background. No private certificate key is stored in the repository or shared with the developer Rust bundle.
+The certificate lasts one year; its expiration and root fingerprint are shown in settings. **Renew HTTPS and trust certificate** confirms replacement while stopped, removes old trust, and requests trust for the replacement in the same action. Restart Office afterward. **Remove HTTPS** removes this identity's trust, public metadata, and private key. **Check certificate trust** refreshes status after an OS trust change. Certificate setup requires an explicit action in onboarding or settings and is saved for later starts, including login startup; trust is never silently installed in the background. No private certificate key is stored in the repository or shared with the developer Rust bundle.
 
 The installers include the combined setup button. The older Word guide still shows separate setup and trust buttons.
 
@@ -94,11 +104,11 @@ The origin validation is centralized in [cors.rs](crates/proxy-core/src/cors.rs)
 
 ## Privacy and removal
 
-Provider keys and the optional HTTPS server private key use macOS Keychain or Windows Credential Manager. Versioned JSON settings contain only endpoints, HTTP/HTTPS ports, HTTPS enablement, a legacy startup compatibility field, and trusted browser origins. A separate JSON file contains only the public certificate chain and expiration. Another non-secret file records worker registration/reset state and its executable fingerprint. The issuing private key is discarded after certificate generation. Diagnostics are a 64-entry memory ring with lifecycle/error messages; prompts, responses, authorization headers, and full request URLs are not recorded. There is no telemetry, hosted relay, or account service.
+Provider keys and the optional HTTPS server private key use macOS Keychain or Windows Credential Manager. Versioned JSON settings contain only endpoints, HTTP/HTTPS ports, HTTPS enablement, a legacy startup compatibility field, onboarding completion, and trusted browser origins. A separate JSON file contains only the public certificate chain and expiration. Another non-secret file records worker registration/reset state and its executable fingerprint. The issuing private key is discarded after certificate generation. Diagnostics are a 64-entry memory ring with lifecycle/error messages; prompts, responses, authorization headers, and full request URLs are not recorded. There is no telemetry, hosted relay, or account service.
 
 Settings uses a private current-user Unix socket on macOS or restricted named pipe on Windows. Revealed keys cross that IPC and Tauri IPC only after a deliberate action. Other native processes running as the same OS user are within the management channel trust boundary. No management HTTP port or new token is created. Owned Rust secret buffers are zeroized where practical; this cannot erase every temporary copy made by the GUI, OS, or transport libraries.
 
-Before uninstalling, select **Reset data / prepare to uninstall**, confirm, then quit. This stops the proxy, disables startup, removes the app's HTTPS certificate trust and private key, deletes stored provider credentials (including any obsolete token from earlier builds), and resets settings. Allow any OS certificate-removal prompt; if cleanup is denied, resolve the permission and retry. On macOS, remove the app through Finder. On Windows, use Installed apps; the uninstaller also stops the worker and removes its scheduled task and old startup registry entries. Removing application files alone can leave native trust and credential-store entries, so use the reset action first. Empty/default settings and a disabled registration marker may remain in the OS app-config directory. Opening settings after reset does not silently enroll startup again; saving a provider or starting a new setup does.
+Before uninstalling, select **Reset data / prepare to uninstall**, confirm, then quit. This stops the proxy, disables startup, removes the app's HTTPS certificate trust and private key, deletes stored provider credentials (including any obsolete token from earlier builds), and resets settings. Allow any OS certificate-removal prompt; if cleanup is denied, resolve the permission and retry. On macOS, remove the app through Finder. On Windows, use Installed apps; the uninstaller also stops the worker and removes its scheduled task and old startup registry entries. Removing application files alone can leave native trust and credential-store entries, so use the reset action first. Empty/default settings and a disabled registration marker may remain in the OS app-config directory. Opening settings after reset does not silently enroll startup again; the final onboarding action explicitly enrolls startup again.
 
 ## Develop
 
@@ -159,14 +169,41 @@ npm run cargo -- test --workspace --locked
 Build native packages on their respective architectures:
 
 ```sh
-# macOS: development .app and .dmg with an ad-hoc bundle signature
-APPLE_SIGNING_IDENTITY=- npm run tauri build -- --bundles app,dmg
+# macOS: development .app and .dmg; complete ad-hoc signing is the default
+npm run tauri build -- --bundles app,dmg
 
 # Windows: graphical setup .exe
 npm run tauri build -- --bundles nsis
 ```
 
-Artifacts are written under `target/release/bundle/`. The [CI workflow](.github/workflows/ci.yml) runs checks and creates unsigned test packages for both Mac architectures and Windows x64. It does not publish releases. Production releases require protected signing/notarization; preview downloads remain explicitly labeled as development packages.
+Artifacts are written under `target/release/bundle/`. The [CI workflow](.github/workflows/ci.yml) runs checks and creates development packages for both Mac architectures and Windows x64, using ad-hoc signing on Mac and no publisher signature on Windows. It does not publish releases. Production releases require protected signing/notarization; preview downloads remain explicitly labeled as development packages.
+
+### macOS signing and installer verification
+
+`bundle.macOS.signingIdentity` defaults to `-`. This makes Tauri sign the embedded worker and seal the complete app bundle after assembling its resources, even when `APPLE_SIGNING_IDENTITY` is unset. Do not replace executables or resources inside the app afterward. This repairs the incomplete-linker-signature packaging defect; ad-hoc signing does not establish a trusted publisher or prove that macOS will accept native background-service registration.
+
+Successful macOS `npm run tauri build` and `npm run tauri bundle` commands automatically run [the package verifier](scripts/verify-macos.mjs). It checks the bundle resource seal, strict/deep app signature, independent worker signature, matching signing teams, and LaunchAgent target. It also verifies DMG checksums, mounts images read-only without opening Finder or launching the app, and checks that the packaged app and worker signatures match the build. A mismatch fails the command. Clear obsolete installers from the build output before bundling a new revision: an old DMG that contains a different app will deliberately fail verification. Compile-only `--no-bundle` builds skip package verification; `--no-sign` packages are unsuitable for background-startup acceptance.
+
+Run these checks separately on macOS:
+
+```sh
+npm run test:packaging
+npm run verify:macos -- --require-dmg
+```
+
+For an explicit Rust target, pass its output directory, for example `npm run verify:macos -- target/aarch64-apple-darwin/release/bundle --require-dmg`.
+
+For production distribution, install a **Developer ID Application** certificate and its private key in the protected build environment. Set `APPLE_SIGNING_IDENTITY` to that identity, overriding the development default. Configure Tauri notarization with `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), and `APPLE_TEAM_ID`, or the supported App Store Connect API credentials. Keep credentials in CI secrets, never in the repository. See [Tauri's macOS signing documentation](https://v2.tauri.app/distribute/sign/macos/).
+
+After the signed/notarized build, require Developer ID identities on both the app and worker and separately validate notarization/Gatekeeper acceptance:
+
+```sh
+npm run verify:macos -- --require-dmg --require-developer-id
+xcrun stapler validate "target/release/bundle/macos/ICA proxy.app"
+spctl --assess --type execute --verbose=2 "target/release/bundle/macos/ICA proxy.app"
+```
+
+The verifier never repairs or re-signs an app. Notarization and signature integrity are separate checks; neither replaces installing the actual DMG on a clean account and verifying onboarding, native background approval/registration, and sign-in startup on each supported macOS architecture.
 
 ## Local provider simulation
 

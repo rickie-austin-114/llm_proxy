@@ -1,9 +1,15 @@
 <script lang="ts">
   let {
     message,
+    heading = 'Confirm change',
+    confirmLabel = 'Continue',
+    cancelLabel = 'Cancel',
     onDecision,
   }: {
     message: string;
+    heading?: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
     onDecision: (confirmed: boolean) => void;
   } = $props();
   let dialog: HTMLDialogElement;
@@ -23,10 +29,10 @@
     onDecision(false);
   }}
 >
-  <h2 id="confirmation-heading">Confirm change</h2>
+  <h2 id="confirmation-heading">{heading}</h2>
   <p id="confirmation-message">{message}</p>
   <div class="confirmation-actions">
-    <button class="button secondary" onclick={() => onDecision(false)}>Cancel</button>
-    <button class="button primary" onclick={() => onDecision(true)}>Continue</button>
+    <button class="button secondary" onclick={() => onDecision(false)}>{cancelLabel}</button>
+    <button class="button primary" onclick={() => onDecision(true)}>{confirmLabel}</button>
   </div>
 </dialog>
