@@ -5,7 +5,8 @@ import type { AppStatus, ProviderDraft, ProviderId } from './types';
 export const isDesktop = isTauri;
 
 export const proxyClient = {
-  finishOnboarding: (): Promise<AppStatus> => invoke('finish_onboarding'),
+  finishOnboarding: (runInBackground: boolean): Promise<AppStatus> =>
+    invoke('finish_onboarding', { runInBackground }),
   skipOnboarding: (draft: ProviderDraft | null): Promise<AppStatus> =>
     invoke('skip_onboarding', { draft }),
   getStatus: (): Promise<AppStatus> => invoke('get_status'),

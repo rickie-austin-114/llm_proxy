@@ -218,9 +218,10 @@ main {
 .keychain-help {
   margin: 16px 0;
   padding: 16px;
-  border: 1px solid #c7d3e2;
+  border: 1px solid #bfd8ef;
   border-radius: 10px;
-  background: #f2f6fb;
+  background: #e9f3fc;
+  color: #234e78;
 }
 .keychain-help h3 {
   margin: 0 0 8px;
@@ -608,6 +609,7 @@ footer .text-button {
   .danger {
     color: #f3a99f;
   }
+  .keychain-help,
   .notice {
     background: #243e56;
     color: #d4e9ff;

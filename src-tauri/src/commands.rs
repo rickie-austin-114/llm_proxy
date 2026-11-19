@@ -85,9 +85,10 @@ pub async fn test_connection(
 pub async fn finish_onboarding(
     window: WebviewWindow,
     controller: State<'_, Arc<AppController>>,
+    run_in_background: bool,
 ) -> Result<AppStatus, AppError> {
     authorize(&window)?;
-    controller.finish_onboarding().await
+    controller.finish_onboarding(run_in_background).await
 }
 
 #[tauri::command]

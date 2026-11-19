@@ -69,6 +69,13 @@ pub fn onboarding_pending(directory: &Path) -> Result<bool, AppError> {
         .onboarding_complete)
 }
 
+pub fn background_enabled(directory: &Path) -> Result<bool, AppError> {
+    Ok(SettingsStore::new(directory.join("settings.json"))
+        .load()?
+        .unwrap_or_default()
+        .run_in_background)
+}
+
 /// Stop the worker and wait for process exit before an installer replaces its executable.
 pub async fn stop_worker() -> Result<(), AppError> {
     let response = match ipc::call(ipc::Request::Identity).await {
@@ -131,7 +138,15 @@ pub async fn run() -> Result<(), AppError> {
     let settings = store.load().map(Option::unwrap_or_default);
     let should_start = settings
         .as_ref()
-        .is_ok_and(|settings| settings.should_start_automatically());
+        .is_ok_and(|settings| settings.should_start_automatically())
+        && !std::env::args().any(|argument| argument == "--foreground");
+    if std::env::args().any(|argument| argument == "--managed")
+        && settings
+            .as_ref()
+            .is_ok_and(|settings| !settings.run_in_background)
+    {
+        return Ok(());
+    }
     let (changes, receiver) = watch::channel(());
     let controller = Arc::new(AppController::new(
         changes,
@@ -141,6 +156,17 @@ pub async fn run() -> Result<(), AppError> {
         CertificateStore::new(directory.join("https-identity.json")),
     ));
     let shutdown = Arc::new(Notify::new());
+    // The GUI holds this worker's stdin open only in foreground mode. EOF also covers
+    // an unexpected GUI exit, without depending on a window-close IPC request.
+    if std::env::args().any(|argument| argument == "--foreground") {
+        let shutdown = shutdown.clone();
+        // A detached OS thread lets explicit IPC shutdown exit even while stdin is
+        // open. Tokio's blocking stdin reader would keep runtime shutdown waiting.
+        std::thread::spawn(move || {
+            wait_for_owner(std::io::stdin().lock());
+            shutdown.notify_one();
+        });
+    }
     let initialize = {
         let controller = controller.clone();
         tokio::spawn(async move {
@@ -157,4 +183,42 @@ pub async fn run() -> Result<(), AppError> {
     let _ = initialize.await;
     let _ = controller.stop().await;
     outcome
+}
+
+fn wait_for_owner(mut input: impl Read) {
+    let mut bytes = [0; 64];
+    loop {
+        match input.read(&mut bytes) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod foreground_tests {
+    use super::*;
+    use std::{io::Write, os::unix::net::UnixStream, sync::mpsc, time::Duration};
+
+    #[test]
+    fn foreground_lifetime_ends_when_the_settings_process_closes_its_pipe() {
+        let (mut owner, input) = UnixStream::pair().expect("owner pipe");
+        let (finished, lifetime) = mpsc::channel();
+        let watcher = std::thread::spawn(move || {
+            wait_for_owner(input);
+            finished.send(()).expect("lifetime result");
+        });
+        owner.write_all(b"still open").expect("owner pipe");
+        assert_eq!(
+            lifetime.recv_timeout(Duration::from_millis(30)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        drop(owner);
+        lifetime
+            .recv_timeout(Duration::from_secs(1))
+            .expect("owner exit stops the worker");
+        watcher.join().expect("lifetime thread");
+    }
 }

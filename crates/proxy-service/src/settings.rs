@@ -24,6 +24,8 @@ pub struct Settings {
     #[serde(default = "default_https_port")]
     pub https_port: u16,
     pub start_at_login: bool,
+    #[serde(default = "background_default")]
+    pub run_in_background: bool,
     #[serde(default = "legacy_onboarding_complete")]
     pub onboarding_complete: bool,
     #[serde(default)]
@@ -43,6 +45,7 @@ impl Default for Settings {
             https_enabled: false,
             https_port: default_https_port(),
             start_at_login: true,
+            run_in_background: true,
             onboarding_complete: false,
             onboarding_skipped: false,
             browser_origins: default_browser_origins(),
@@ -54,7 +57,7 @@ impl Default for Settings {
 
 impl Settings {
     pub fn should_start_automatically(&self) -> bool {
-        self.onboarding_complete && !self.providers.is_empty()
+        self.run_in_background && self.onboarding_complete && !self.providers.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), AppError> {
@@ -80,6 +83,10 @@ impl Settings {
         }
         Ok(())
     }
+}
+
+fn background_default() -> bool {
+    true
 }
 
 fn legacy_onboarding_complete() -> bool {
@@ -213,6 +220,7 @@ mod tests {
         assert_eq!(settings.browser_origins, default_browser_origins());
         assert!(!settings.start_at_login);
         assert!(settings.onboarding_complete);
+        assert!(settings.run_in_background);
         settings.browser_origins.clear();
         let directory = tempfile::tempdir().expect("temporary settings");
         let store = SettingsStore::new(directory.path().join("settings.json"));
@@ -295,5 +303,27 @@ mod tests {
             .expect("settings")
             .should_start_automatically());
         assert!(!Settings::default().should_start_automatically());
+    }
+
+    #[test]
+    fn foreground_choice_survives_reload_without_enabling_automatic_start() {
+        let directory = tempfile::tempdir().expect("isolated foreground settings");
+        let store = SettingsStore::new(directory.path().join("settings.json"));
+        let mut settings = Settings {
+            onboarding_complete: true,
+            run_in_background: false,
+            ..Settings::default()
+        };
+        settings.providers.push(SavedProvider {
+            id: Provider::Claude,
+            upstream_base_url: Provider::Claude.default_endpoint().into(),
+        });
+        store.save(&settings).expect("save foreground choice");
+        let reloaded = store.load().expect("reload").expect("saved settings");
+        assert!(reloaded.onboarding_complete);
+        assert!(!reloaded.run_in_background);
+        assert!(!reloaded.should_start_automatically());
+        assert!(!crate::background_enabled(directory.path()).expect("saved mode"));
+        assert!(!crate::onboarding_pending(directory.path()).expect("setup complete"));
     }
 }

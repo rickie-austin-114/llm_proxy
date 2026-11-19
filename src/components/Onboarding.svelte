@@ -35,7 +35,7 @@
   const locked = $derived(disabled || busy);
   const provider = $derived(status.providers.find((item) => item.id === selected)!);
   const approvalRequired = $derived(status.backgroundStartup === 'approval_required');
-  const labels = ['Provider key', 'Trusted HTTPS', 'Background proxy'];
+  const labels = ['Provider key', 'Trusted HTTPS', 'Start proxy'];
 
   onDestroy(() => {
     apiKey = '';
@@ -85,15 +85,17 @@
     });
   }
 
-  async function finish(): Promise<void> {
+  async function finish(runInBackground: boolean): Promise<void> {
     await perform(async () => {
-      const next = await proxyClient.finishOnboarding();
+      const next = await proxyClient.finishOnboarding(runInBackground);
       onStatus(next);
       if (next.onboardingComplete) {
         onNotice(
-          next.backgroundStartup === 'development'
-            ? 'Setup complete. The proxy is running. Development builds do not register background startup.'
-            : 'Setup complete. The proxy is running and will start in the background after you sign in.',
+          !next.runInBackground
+            ? 'Setup complete. The proxy is running while ICA proxy is open. Closing or quitting the app stops it.'
+            : next.backgroundStartup === 'development'
+              ? 'Setup complete. The proxy is running. Development builds do not register background startup.'
+              : 'Setup complete. The proxy is running and will start in the background after you sign in.',
         );
       } else if (next.backgroundStartup === 'approval_required') {
         onNotice(
@@ -142,7 +144,7 @@
   <div class="setup-intro">
     <p class="eyebrow">FIRST-TIME SETUP</p>
     <h1 id="setup-heading">Set up ICA proxy</h1>
-    <p>Connect a provider, secure localhost, then let the proxy run in the background.</p>
+    <p>Connect a provider, secure localhost, then choose how to run the proxy.</p>
   </div>
 
   <ol class="setup-progress" aria-label="Setup progress">
@@ -258,10 +260,10 @@
         >{busy ? 'Setting up trusted HTTPS…' : 'Set up HTTPS and trust certificate'}</button
       >
     {:else}
-      <h2>Keep the proxy ready</h2>
+      <h2>Choose how to run</h2>
       <p>
-        Start your secure proxy now and enable automatic background startup after you sign in. The
-        settings window stays closed at sign-in.
+        Start your secure proxy now. Enable background startup to keep it running after the app
+        closes and start it automatically after you sign in.
       </p>
       <div class="setup-detail">
         <strong>{status.phase === 'running' ? 'Proxy running' : 'Ready to start'}</strong>
@@ -295,13 +297,22 @@
           in the installed app.
         </p>
       {/if}
-      <button class="button primary" onclick={finish} disabled={locked}
+      <button class="button primary" onclick={() => finish(true)} disabled={locked}
         >{busy
           ? 'Starting and checking…'
           : approvalRequired
             ? 'Check approval and finish setup'
             : 'Start proxy and enable background startup'}</button
       >
+      <div class="foreground-option">
+        <button class="button secondary" onclick={() => finish(false)} disabled={locked}
+          >Start without background startup</button
+        >
+        <p class="field-hint">
+          Runs only while ICA proxy is open. Closing or quitting the app stops the proxy. It will
+          not start automatically after sign-in.
+        </p>
+      </div>
     {/if}
   </div>
   <div class="setup-footer">
@@ -323,6 +334,9 @@
 </section>
 
 <style>
+  .foreground-option {
+    margin-top: 18px;
+  }
   .onboarding {
     max-width: 720px;
     margin: 8px auto 24px;

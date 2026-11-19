@@ -24,6 +24,7 @@ export interface Diagnostic {
 }
 
 export interface AppStatus {
+  runInBackground: boolean;
   onboardingComplete: boolean;
   onboardingSkipped: boolean;
   platform: string;

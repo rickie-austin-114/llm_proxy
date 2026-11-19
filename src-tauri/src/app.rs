@@ -20,6 +20,7 @@ pub struct AppController {
     startup_state: Mutex<String>,
     startup_error: Mutex<Option<AppError>>,
     cached: Mutex<Option<AppStatus>>,
+    foreground_owner: Mutex<Option<std::process::ChildStdin>>,
 }
 
 impl AppController {
@@ -33,6 +34,7 @@ impl AppController {
             startup_state: Mutex::new("unknown".into()),
             startup_error: Mutex::new(None),
             cached: Mutex::new(None),
+            foreground_owner: Mutex::new(None),
         }
     }
 
@@ -85,25 +87,28 @@ impl AppController {
             blocking(|| proxy_service::binary_fingerprint(&startup::worker_path()?)).await?;
         let state = self.startup_state.lock().await.clone();
         let requires_managed = state == "enabled";
+        let requires_foreground = state == "foreground";
+        let owns_foreground = self.foreground_owner.lock().await.is_some();
         if let Ok(response) = ipc::call(Request::Identity).await {
-            if matches!(&response, Response::Identity { fingerprint, managed, .. } if *fingerprint == expected && (!requires_managed || *managed))
+            if matches!(&response, Response::Identity { fingerprint, managed, foreground, .. } if *fingerprint == expected && (!requires_managed || *managed) && *foreground == requires_foreground && (!requires_foreground || owns_foreground))
             {
                 return Ok(());
             }
             // Replacing a running worker is an app upgrade; never send new secrets to an old binary.
             proxy_service::stop_worker().await?;
         }
-        blocking(move || startup::launch(&startup::worker_path()?, &state)).await?;
+        *self.foreground_owner.lock().await =
+            blocking(move || startup::launch(&startup::worker_path()?, &state)).await?;
         for attempt in 0..40 {
             if let Ok(response) = ipc::call(Request::Identity).await {
-                if matches!(&response, Response::Identity { fingerprint, managed, .. } if *fingerprint == expected && (!requires_managed || *managed))
+                if matches!(&response, Response::Identity { fingerprint, managed, foreground, .. } if *fingerprint == expected && (!requires_managed || *managed) && *foreground == requires_foreground)
                 {
                     return Ok(());
                 }
             }
             tokio::time::sleep(Duration::from_millis(if attempt < 10 { 100 } else { 300 })).await;
         }
-        Err(AppError::new("worker_start_failed", "The background proxy did not start. Check OS background-app permissions and reopen settings."))
+        Err(AppError::new("worker_start_failed", "The proxy worker did not start. Reopen ICA proxy and try again. If background startup is selected, check OS background-app permissions."))
     }
 
     async fn decorate(&self, mut status: AppStatus) -> AppStatus {
@@ -157,7 +162,7 @@ impl AppController {
         let _operation = self.operations.lock().await;
         let status = self.status_command(Request::Status).await?;
         if !status.onboarding_complete && !status.onboarding_skipped {
-            return self.finish_onboarding_inner().await;
+            return self.finish_onboarding_inner(true).await;
         }
         self.connect().await?;
         self.registration(if status.onboarding_skipped {
@@ -182,20 +187,44 @@ impl AppController {
         self.status_command(Request::SkipOnboarding { draft }).await
     }
 
-    pub async fn finish_onboarding(&self) -> Result<AppStatus, AppError> {
+    pub async fn finish_onboarding(&self, run_in_background: bool) -> Result<AppStatus, AppError> {
         let _operation = self.operations.lock().await;
-        self.finish_onboarding_inner().await
+        self.finish_onboarding_inner(run_in_background).await
     }
 
-    async fn finish_onboarding_inner(&self) -> Result<AppStatus, AppError> {
+    async fn finish_onboarding_inner(
+        &self,
+        run_in_background: bool,
+    ) -> Result<AppStatus, AppError> {
         let status = self.status_command(Request::CheckHttps).await?;
-        status.validate_onboarding_prerequisites()?;
-        self.registration(startup::Intent::Enroll).await;
+        let setup_pending = !status.onboarding_complete;
+        // Completed users can enable background operation with their current settings,
+        // including HTTP-only settings chosen after onboarding.
+        if setup_pending {
+            status.validate_onboarding_prerequisites()?;
+        }
+        if run_in_background {
+            self.status_command(Request::SetRunInBackground { enabled: true })
+                .await?;
+            self.registration(startup::Intent::Enroll).await;
+        } else {
+            let directory = self.directory.clone();
+            blocking(move || startup::disable_enrolled(&directory)).await?;
+            proxy_service::stop_worker().await?;
+            *self.startup_state.lock().await = "foreground".into();
+            *self.startup_error.lock().await = None;
+            self.status_command(Request::SetRunInBackground { enabled: false })
+                .await?;
+        }
         let status = self.status_command(Request::Start).await?;
-        if matches!(
-            status.background_startup.as_str(),
-            "enabled" | "development"
-        ) {
+        if !setup_pending {
+            Ok(status)
+        } else if !run_in_background
+            || matches!(
+                status.background_startup.as_str(),
+                "enabled" | "development"
+            )
+        {
             self.status_command(Request::CompleteOnboarding).await
         } else {
             // Keep the final step resumable while the OS requires approval or repair.

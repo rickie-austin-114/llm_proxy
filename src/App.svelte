@@ -179,10 +179,16 @@
     )
       return;
     await perform(async () => {
-      const next = await proxyClient.checkBackgroundStartup();
+      const next = await (status.runInBackground
+        ? proxyClient.checkBackgroundStartup()
+        : proxyClient.finishOnboarding(true));
       updateStatus(next);
       if (next.backgroundStartup === 'enabled') {
         notify('Background startup is enabled. Only the proxy worker starts after sign-in.');
+      } else if (next.backgroundStartup === 'development') {
+        notify(
+          'Background operation selected. Development builds do not register sign-in startup.',
+        );
       } else if (next.backgroundStartup === 'approval_required') {
         notify('macOS approval is still required. Open Login Items settings to allow ICA proxy.');
       } else if (next.backgroundStartup === 'disabled') {
@@ -439,28 +445,34 @@
         <h2 id="preferences-heading">Background & startup</h2>
         <div class="preferences-row">
           <div class="startup-description">
-            <strong>Automatic background proxy</strong>
+            <strong
+              >{status.runInBackground
+                ? 'Automatic background proxy'
+                : 'Run while app is open'}</strong
+            >
             <p>
-              {status.backgroundStartup === 'enabled'
-                ? 'The proxy starts after you sign in. This settings app stays closed.'
-                : status.backgroundStartup === 'approval_required'
-                  ? 'Allow ICA proxy under Login Items & Extensions in macOS System Settings.'
-                  : status.backgroundStartup === 'disabled'
-                    ? status.platform === 'windows'
-                      ? 'Background startup is disabled. Check the task whose name starts with llm_proxy- in Windows Task Scheduler, or resume setup after resetting.'
-                      : 'Background startup is disabled. Check macOS Login Items & Extensions, or resume setup after resetting.'
-                    : status.backgroundStartup === 'development'
-                      ? 'Development mode: automatic startup is not registered.'
-                      : status.backgroundStartup === 'setup_required'
-                        ? status.onboardingSkipped
-                          ? 'Start the proxy or resume guided setup to enable background startup.'
-                          : 'Finish first-time setup to enable background startup.'
-                        : status.backgroundStartup === 'installation_required'
-                          ? 'Install the complete ICA proxy app in Applications and open that copy to configure background startup.'
-                          : 'Background startup needs attention. Check the error above, then select Check background startup to retry.'}
+              {!status.runInBackground
+                ? 'The proxy stops when you close or quit ICA proxy. Automatic sign-in startup is off.'
+                : status.backgroundStartup === 'enabled'
+                  ? 'The proxy starts after you sign in. This settings app stays closed.'
+                  : status.backgroundStartup === 'approval_required'
+                    ? 'Allow ICA proxy under Login Items & Extensions in macOS System Settings.'
+                    : status.backgroundStartup === 'disabled'
+                      ? status.platform === 'windows'
+                        ? 'Background startup is disabled. Check the task whose name starts with llm_proxy- in Windows Task Scheduler, or resume setup after resetting.'
+                        : 'Background startup is disabled. Check macOS Login Items & Extensions, or resume setup after resetting.'
+                      : status.backgroundStartup === 'development'
+                        ? 'Development mode: automatic startup is not registered.'
+                        : status.backgroundStartup === 'setup_required'
+                          ? status.onboardingSkipped
+                            ? 'Start the proxy or resume guided setup to enable background startup.'
+                            : 'Finish first-time setup to enable background startup.'
+                          : status.backgroundStartup === 'installation_required'
+                            ? 'Install the complete ICA proxy app in Applications and open that copy to configure background startup.'
+                            : 'Background startup needs attention. Check the error above, then select Check background startup to retry.'}
             </p>
-            {#if status.backgroundStartup !== 'development'}
-              {#if status.platform === 'macos'}
+            {#if status.backgroundStartup !== 'development' || !status.runInBackground}
+              {#if status.platform === 'macos' && status.runInBackground}
                 <button class="button secondary small" onclick={openStartupSettings} {disabled}
                   >Open Login Items settings</button
                 >
@@ -468,7 +480,10 @@
               <button
                 class="button secondary small"
                 onclick={checkBackgroundStartup}
-                disabled={disabled || status.settingsNeedReset}>Check background startup</button
+                disabled={disabled || status.settingsNeedReset}
+                >{status.runInBackground
+                  ? 'Check background startup'
+                  : 'Enable background startup'}</button
               >
             {/if}
           </div>
@@ -492,9 +507,9 @@
           </div>
         </div>
         <p class="field-hint">
-          Closing or quitting settings leaves the proxy running. Open ICA proxy from Applications or
-          the Start menu to return here. Use Stop proxy to stop requests until the worker starts
-          again after sign-in.
+          {status.runInBackground
+            ? 'Closing or quitting settings leaves the proxy running. Open ICA proxy from Applications or the Start menu to return here. Use Stop proxy to stop requests until the worker starts again after sign-in.'
+            : 'Keep ICA proxy open while using your clients. Closing or quitting the app stops the proxy. Reopen the app and select Start proxy to run it again.'}
         </p>
       </section>
 

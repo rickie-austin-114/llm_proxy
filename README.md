@@ -10,17 +10,17 @@
 
 ## Install and configure
 
-The v0.2.2 preview adds the first-run wizard described below, optional setup dismissal, background-startup recovery, and verified macOS bundle signing. The [older Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) includes PowerPoint screenshots, but shows the previous two-button HTTPS setup and tray lifecycle.
+The v0.2.3 preview adds **Start without background startup** to the final setup step and fixes the macOS Keychain panel's blue background and text contrast in dark mode. It includes the first-run wizard, optional setup dismissal, background-startup recovery, and verified macOS bundle signing from v0.2.2. The [older Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) includes PowerPoint screenshots, but shows the previous two-button HTTPS setup and tray lifecycle.
 
-Download the **ICA proxy v0.2.2 preview** installer for your computer:
+Download the **ICA proxy v0.2.3 preview** installer for your computer:
 
 | Computer                 | Download                                                                                                                            |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.2/ICA-Proxy-0.2.2-macOS-Apple-Silicon.dmg)     |
-| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.2/ICA-Proxy-0.2.2-macOS-Intel.dmg)             |
-| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.2/ICA-Proxy-0.2.2-Windows-x64-Setup.exe) |
+| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.3/ICA-Proxy-0.2.3-macOS-Apple-Silicon.dmg)     |
+| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.3/ICA-Proxy-0.2.3-macOS-Intel.dmg)             |
+| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.3/ICA-Proxy-0.2.3-Windows-x64-Setup.exe) |
 
-These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.2.2) for limitations and checksums.
+These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.2.3) for limitations and checksums.
 
 The intended graphical installation is:
 
@@ -32,15 +32,15 @@ End users do not need Node.js, Rust, a package manager, or a terminal.
 1. Open **ICA proxy**. The first-run wizard starts automatically on a new installation or after resetting app data.
 2. **Provider key:** choose Claude or OpenAI, paste your API key, and select **Save key and continue**. Keep the default endpoint, or expand **Provider endpoint** to change it. One provider is sufficient; add the other or test its connection in settings later.
 3. **Trusted HTTPS:** select **Set up HTTPS and trust certificate** and approve the operating system prompt. The wizard verifies trust before continuing. If approval is canceled, retry with the saved certificate.
-4. **Background proxy:** select **Start proxy and enable background startup**. If macOS needs approval, select **Open Login Items settings**, enable ICA proxy under **Allow in the Background**, return, and select **Check approval and finish setup**. The proxy can run during this sign-in while approval is pending; setup finishes only after background startup is enabled.
+4. **Start proxy:** select **Start proxy and enable background startup**. If macOS needs approval, select **Open Login Items settings**, enable ICA proxy under **Allow in the Background**, return, and select **Check approval and finish setup**. The proxy can run during this sign-in while approval is pending; this choice finishes setup only after background startup is enabled. Choose **Start without background startup** to finish setup and run only while ICA proxy is open, without enabling sign-in startup.
 5. Copy the local HTTPS URL from settings into your API client, using the **same API key** saved for that provider. Claude for Office uses `https://localhost:8788/claude` by default.
-6. Close settings. After reboot/sign-in, only the proxy worker starts. There is no Start at login checkbox.
+6. With background startup enabled, close settings; after reboot/sign-in, only the proxy worker starts. With **Start without background startup**, keep the app open while using your clients. Closing or quitting stops the proxy; reopen the app and select **Start proxy** to run it again. There is no Start at login checkbox.
 
 Setup resumes from saved progress if interrupted. **Open settings** provides access to ports and diagnostics; **Resume setup** returns to the wizard. Saving a key alone does not enroll a new installation for background startup or start its listeners. Existing installations retain their settings and skip the wizard. HTTPS remains optional in normal settings for those installations; new onboarding includes it. Developer builds clearly report that they do not register background startup.
 
 Select **Skip setup** at any step to save your entered details and open settings. A typed key is saved in the OS credential store before leaving; an endpoint-only edit is retained without pretending a key is configured. If saving fails, setup stays open so you can retry. Previously saved keys and certificate progress are retained. Skipping stays remembered after reopening, and **Resume setup** lets you return. It does not create/trust a certificate, start a stopped proxy, or newly enable background startup. From settings, save a key and choose **Start proxy** when ready to run with your current configuration and request background startup; HTTPS can be configured later.
 
-Close or quit settings to leave the proxy and active requests running. Open **ICA proxy** from Applications or the Windows Start menu to return to settings. **Stop proxy** stops requests until you select Start or the worker starts again after sign-in. Background startup status appears under **Background & startup**. macOS may require approval in System Settings → General → Login Items & Extensions; subsequent OS-disabled worker registration is respected.
+With background operation selected, close or quit settings to leave the proxy and active requests running. Open **ICA proxy** from Applications or the Windows Start menu to return to settings. **Stop proxy** stops requests until you select Start or the worker starts again after sign-in. Background startup status appears under **Background & startup**. Foreground users can choose **Enable background startup** there later. macOS may require approval in System Settings → General → Login Items & Extensions; subsequent OS-disabled worker registration is respected.
 
 After onboarding, if macOS reports that background startup needs approval, opening settings shows an **Allow background startup** prompt. Select **Open Login Items settings**, enable ICA proxy under **Allow in the Background**, then return and select **Check background startup**. You can choose **Later** and use the buttons under **Background & startup** when ready. The prompt appears at most once per settings session; sign-in still launches only the worker. macOS controls approval, so the app cannot grant it or force a native Allow dialog.
 

@@ -29,6 +29,9 @@ pub enum Request {
     Subscribe,
     Start,
     StartAfterSkip,
+    SetRunInBackground {
+        enabled: bool,
+    },
     CompleteOnboarding,
     SkipOnboarding {
         draft: Option<crate::app::ProviderDraft>,
@@ -89,6 +92,8 @@ pub enum Response {
         process_id: u32,
         fingerprint: String,
         managed: bool,
+        #[serde(default)]
+        foreground: bool,
     },
     Status(Box<AppStatus>),
     Text(String),
@@ -197,11 +202,15 @@ async fn execute(controller: &AppController, request: &mut Request) -> Result<Re
                 process_id: std::process::id(),
                 fingerprint: crate::running_fingerprint(),
                 managed: std::env::args().any(|argument| argument == "--managed"),
+                foreground: std::env::args().any(|argument| argument == "--foreground"),
             })
         }
         Request::Status => controller.status().await,
         Request::Start => controller.start().await?,
         Request::StartAfterSkip => controller.start_after_skip().await?,
+        Request::SetRunInBackground { enabled } => {
+            controller.set_run_in_background(*enabled).await?
+        }
         Request::CompleteOnboarding => controller.complete_onboarding().await?,
         Request::SkipOnboarding { draft } => controller.skip_onboarding(draft.take()).await?,
         Request::Stop => controller.stop().await?,
@@ -328,6 +337,21 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_older_worker_identity_for_upgrade_handoff() {
+        let response: Response = serde_json::from_str(
+            r#"{"kind":"identity","value":{"process_id":1,"fingerprint":"old-worker","managed":false}}"#,
+        )
+        .expect("older identity still decodes");
+        assert!(matches!(
+            &response,
+            Response::Identity {
+                foreground: false,
+                ..
+            }
+        ));
+    }
 
     #[tokio::test]
     async fn rejects_oversized_frames_before_allocating_or_reading_the_body() {

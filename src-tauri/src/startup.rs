@@ -134,6 +134,9 @@ pub fn needs_worker_handoff(directory: &Path, intent: Intent) -> Result<bool, Ap
 }
 
 pub fn initialize(directory: &Path, worker: &Path, intent: Intent) -> Result<String, AppError> {
+    if !proxy_service::background_enabled(directory)? {
+        return Ok("foreground".into());
+    }
     // Development sessions never change login items, scheduled tasks, or legacy registration.
     if cfg!(debug_assertions) {
         return Ok("development".into());
@@ -147,6 +150,9 @@ fn initialize_with_service(
     intent: Intent,
     service: &impl StartupService,
 ) -> Result<String, AppError> {
+    if !proxy_service::background_enabled(directory)? {
+        return Ok("foreground".into());
+    }
     let previous = load(directory)?;
     let setup_pending = intent != Intent::Enroll && proxy_service::onboarding_pending(directory)?;
     // Inspect an already enrolled approval request, but never enroll/repair early.
@@ -295,13 +301,48 @@ pub fn disable(directory: &Path) -> Result<(), AppError> {
     )
 }
 
-pub fn launch(worker: &Path, state: &str) -> Result<(), AppError> {
+pub fn disable_enrolled(directory: &Path) -> Result<(), AppError> {
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
+    disable_enrolled_with_service(directory, &NativeService)
+}
+
+fn disable_enrolled_with_service(
+    directory: &Path,
+    service: &impl StartupService,
+) -> Result<(), AppError> {
+    // A fresh setup can run in the foreground without contacting ServiceManagement
+    // or Task Scheduler. An earlier background attempt must be undone first.
+    if load(directory)?.is_some_and(|registration| !registration.reset) {
+        service.unregister()?;
+        service.remove_legacy()?;
+        save(
+            directory,
+            &Registration {
+                fingerprint: String::new(),
+                reset: true,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+pub fn launch(worker: &Path, state: &str) -> Result<Option<std::process::ChildStdin>, AppError> {
     if state == "enabled" && !cfg!(debug_assertions) {
-        return platform::launch();
+        platform::launch()?;
+        return Ok(None);
     }
     let mut command = std::process::Command::new(worker);
+    if state == "foreground" {
+        command.arg("--foreground");
+    }
     command
-        .stdin(std::process::Stdio::null())
+        .stdin(if state == "foreground" {
+            std::process::Stdio::piped()
+        } else {
+            std::process::Stdio::null()
+        })
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     #[cfg(windows)]
@@ -310,12 +351,13 @@ pub fn launch(worker: &Path, state: &str) -> Result<(), AppError> {
         command.creation_flags(0x08000000);
     }
     let mut child = command.spawn().map_err(|_| error())?;
-    // The worker intentionally outlives the GUI. Reap a failed manual launch without keeping
-    // the GUI runtime alive or terminating the worker when its parent exits.
+    let owner = child.stdin.take();
+    // Reap the child independently. For foreground launches, the caller retains the
+    // stdin pipe; closing it tells the worker to stop and drain its proxy listeners.
     std::thread::spawn(move || {
         let _ = child.wait();
     });
-    Ok(())
+    Ok(owner)
 }
 
 pub fn open_settings() -> Result<(), AppError> {
@@ -886,6 +928,7 @@ mod tests {
         states: std::cell::RefCell<std::collections::VecDeque<ServiceState>>,
         calls: std::cell::RefCell<Vec<&'static str>>,
         registration: Result<(), AppError>,
+        unregistration: Result<(), AppError>,
     }
 
     impl FakeService {
@@ -894,6 +937,7 @@ mod tests {
                 states: std::cell::RefCell::new(states.into_iter().collect()),
                 calls: std::cell::RefCell::new(Vec::new()),
                 registration: Ok(()),
+                unregistration: Ok(()),
             }
         }
 
@@ -923,13 +967,131 @@ mod tests {
 
         fn unregister(&self) -> Result<(), AppError> {
             self.calls.borrow_mut().push("unregister");
-            Ok(())
+            self.unregistration.clone()
         }
 
         fn remove_legacy(&self) -> Result<(), AppError> {
             self.calls.borrow_mut().push("remove_legacy");
             Ok(())
         }
+    }
+
+    #[test]
+    fn foreground_preference_bypasses_native_startup_and_bundle_validation() {
+        for completed in [false, true] {
+            let fixture = Fixture::new(completed);
+            fs::write(
+                fixture.directory.join("settings.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "schemaVersion": 1, "localPort": 8787, "startAtLogin": true,
+                    "onboardingComplete": completed, "providers": [], "runInBackground": false
+                }))
+                .expect("foreground settings"),
+            )
+            .expect("save preference");
+            fixture.marker("previous-enrollment", false);
+            fs::remove_file(&fixture.worker).expect("missing bundle worker");
+            for intent in [Intent::Inspect, Intent::Repair, Intent::Enroll] {
+                let service = FakeService::new([]);
+                assert_eq!(
+                    fixture.initialize(intent, &service).expect("foreground"),
+                    "foreground"
+                );
+                service.assert_calls(&[]);
+                assert_eq!(
+                    initialize(&fixture.directory, &fixture.worker, intent).expect("public policy"),
+                    "foreground"
+                );
+            }
+            assert_eq!(
+                load(&fixture.directory)
+                    .expect("marker")
+                    .expect("preserved")
+                    .fingerprint,
+                "previous-enrollment"
+            );
+        }
+    }
+
+    #[test]
+    fn foreground_choice_without_active_enrollment_never_calls_native_startup() {
+        let fixture = Fixture::new(false);
+        let service = FakeService::new([]);
+        disable_enrolled_with_service(&fixture.directory, &service).expect("fresh setup");
+        assert!(load(&fixture.directory).expect("marker").is_none());
+        fixture.marker("", true);
+        disable_enrolled_with_service(&fixture.directory, &service).expect("already disabled");
+        assert!(
+            load(&fixture.directory)
+                .expect("marker")
+                .expect("reset")
+                .reset
+        );
+        service.assert_calls(&[]);
+    }
+
+    #[test]
+    fn foreground_choice_removes_earlier_background_enrollment() {
+        let fixture = Fixture::new(false);
+        fixture.marker(&fixture.fingerprint(), false);
+        let service = FakeService::new([]);
+        disable_enrolled_with_service(&fixture.directory, &service).expect("remove enrollment");
+        service.assert_calls(&["unregister", "remove_legacy"]);
+        let marker = load(&fixture.directory).expect("marker").expect("saved");
+        assert!(marker.reset);
+        assert!(marker.fingerprint.is_empty());
+    }
+
+    #[test]
+    fn failed_foreground_switch_preserves_background_enrollment_for_retry() {
+        let fixture = Fixture::new(false);
+        let fingerprint = fixture.fingerprint();
+        fixture.marker(&fingerprint, false);
+        let mut service = FakeService::new([]);
+        service.unregistration = Err(AppError::new("fixture_denied", "Simulated denial"));
+        assert_eq!(
+            disable_enrolled_with_service(&fixture.directory, &service)
+                .expect_err("unregister failed")
+                .code,
+            "fixture_denied"
+        );
+        service.assert_calls(&["unregister"]);
+        let marker = load(&fixture.directory)
+            .expect("marker")
+            .expect("preserved");
+        assert!(!marker.reset);
+        assert_eq!(marker.fingerprint, fingerprint);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn foreground_launch_keeps_stdin_open_until_the_owner_is_dropped() {
+        use std::{
+            os::unix::fs::PermissionsExt,
+            time::{Duration, Instant},
+        };
+        let directory = tempfile::tempdir().expect("isolated foreground executable");
+        let worker = directory.path().join("fixture-worker");
+        fs::write(
+            &worker,
+            "#!/bin/sh\n[ \"$1\" = \"--foreground\" ] || exit 7\nprintf ready > \"$0.ready\"\ncat >/dev/null\nprintf stopped > \"$0.done\"\n",
+        ).expect("fixture executable");
+        fs::set_permissions(&worker, fs::Permissions::from_mode(0o755)).expect("permissions");
+        let wait_for = |name| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !directory.path().join(name).exists() {
+                assert!(Instant::now() < deadline, "worker did not create {name}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let owner = launch(&worker, "foreground")
+            .expect("launch")
+            .expect("owner pipe");
+        wait_for("fixture-worker.ready");
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(!directory.path().join("fixture-worker.done").exists());
+        drop(owner);
+        wait_for("fixture-worker.done");
     }
 
     #[test]

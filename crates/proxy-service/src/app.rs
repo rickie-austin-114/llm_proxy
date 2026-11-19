@@ -59,6 +59,7 @@ pub struct ProviderDraft {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
+    pub run_in_background: bool,
     pub platform: String,
     pub phase: Phase,
     pub local_port: u16,
@@ -219,7 +220,18 @@ impl AppController {
             settings_need_reset: model.settings_need_reset,
             onboarding_complete: model.settings.onboarding_complete,
             onboarding_skipped: model.settings.onboarding_skipped,
+            run_in_background: model.settings.run_in_background,
         }
+    }
+
+    pub async fn set_run_in_background(&self, enabled: bool) -> Result<AppStatus, AppError> {
+        let _operation = self.operations.lock().await;
+        let mut settings = self.editable_settings().await?;
+        settings.run_in_background = enabled;
+        self.persist(settings.clone()).await?;
+        self.model.lock().await.settings = settings;
+        self.publish().await;
+        Ok(self.status().await)
     }
 
     pub async fn complete_onboarding(&self) -> Result<AppStatus, AppError> {
@@ -907,6 +919,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_mode_persistence_preserves_the_current_choice() {
+        let directory = tempfile::tempdir().expect("isolated mode settings");
+        let controller = setup_controller(directory.path(), Settings::default());
+        std::fs::create_dir(directory.path().join("settings.json"))
+            .expect("block settings replacement");
+        assert!(controller.set_run_in_background(false).await.is_err());
+        assert!(controller.status().await.run_in_background);
+    }
+
+    #[tokio::test]
     async fn skipping_keeps_saved_provider_and_https_progress_without_starting_or_finishing_setup()
     {
         let directory = tempfile::tempdir().expect("isolated settings");
@@ -1201,16 +1223,26 @@ mod tests {
             "https_setup_required"
         );
         controller.model.lock().await.certificate.expires_at = Some(i64::MAX);
-        let completed = controller
-            .complete_onboarding()
-            .await
-            .expect("complete setup");
-        assert!(completed.onboarding_complete);
-        assert!(store
-            .load()
-            .expect("reload")
-            .expect("saved settings")
-            .should_start_automatically());
+        for run_in_background in [false, true] {
+            controller
+                .set_run_in_background(run_in_background)
+                .await
+                .expect("save run mode");
+            let completed = controller
+                .complete_onboarding()
+                .await
+                .expect("complete setup in either mode");
+            assert!(completed.onboarding_complete);
+            assert_eq!(completed.run_in_background, run_in_background);
+            assert_eq!(
+                store
+                    .load()
+                    .expect("reload")
+                    .expect("saved settings")
+                    .should_start_automatically(),
+                run_in_background
+            );
+        }
         controller.stop().await.expect("release fixture listeners");
     }
 
