@@ -9,15 +9,16 @@ pub use proxy_service::{
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, OnceCell};
 
-use crate::startup;
+use crate::{startup, worker};
 
 pub struct AppController {
     app: AppHandle,
     directory: PathBuf,
     initialized: OnceCell<()>,
-    connection: Mutex<()>,
+    connection: Mutex<worker::Connection>,
     operations: Mutex<()>,
     startup_state: Mutex<String>,
+    startup_operations: Mutex<()>,
     startup_error: Mutex<Option<AppError>>,
     cached: Mutex<Option<AppStatus>>,
     foreground_owner: Mutex<Option<std::process::ChildStdin>>,
@@ -29,9 +30,10 @@ impl AppController {
             app,
             directory,
             initialized: OnceCell::new(),
-            connection: Mutex::new(()),
+            connection: Mutex::new(worker::Connection::default()),
             operations: Mutex::new(()),
             startup_state: Mutex::new("unknown".into()),
+            startup_operations: Mutex::new(()),
             startup_error: Mutex::new(None),
             cached: Mutex::new(None),
             foreground_owner: Mutex::new(None),
@@ -39,6 +41,7 @@ impl AppController {
     }
 
     async fn registration(&self, intent: startup::Intent) {
+        let _startup = self.startup_operations.lock().await;
         let directory = self.directory.clone();
         match blocking(move || startup::needs_worker_handoff(&directory, intent)).await {
             Ok(true) => {
@@ -82,33 +85,26 @@ impl AppController {
                 self.registration(startup::Intent::Inspect).await;
             })
             .await;
-        let _connection = self.connection.lock().await;
+        let mut connection = self.connection.lock().await;
         let expected =
             blocking(|| proxy_service::binary_fingerprint(&startup::worker_path()?)).await?;
         let state = self.startup_state.lock().await.clone();
-        let requires_managed = state == "enabled";
-        let requires_foreground = state == "foreground";
         let owns_foreground = self.foreground_owner.lock().await.is_some();
-        if let Ok(response) = ipc::call(Request::Identity).await {
-            if matches!(&response, Response::Identity { fingerprint, managed, foreground, .. } if *fingerprint == expected && (!requires_managed || *managed) && *foreground == requires_foreground && (!requires_foreground || owns_foreground))
-            {
-                return Ok(());
+        match connection
+            .connect(
+                self,
+                &expected,
+                &state,
+                owns_foreground,
+                cfg!(target_os = "macos") && !cfg!(debug_assertions),
+            )
+            .await
+        {
+            Err(error) if error.code == "worker_start_failed" => {
+                Err(self.startup_error.lock().await.clone().unwrap_or(error))
             }
-            // Replacing a running worker is an app upgrade; never send new secrets to an old binary.
-            proxy_service::stop_worker().await?;
+            result => result,
         }
-        *self.foreground_owner.lock().await =
-            blocking(move || startup::launch(&startup::worker_path()?, &state)).await?;
-        for attempt in 0..40 {
-            if let Ok(response) = ipc::call(Request::Identity).await {
-                if matches!(&response, Response::Identity { fingerprint, managed, foreground, .. } if *fingerprint == expected && (!requires_managed || *managed) && *foreground == requires_foreground)
-                {
-                    return Ok(());
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(if attempt < 10 { 100 } else { 300 })).await;
-        }
-        Err(AppError::new("worker_start_failed", "The proxy worker did not start. Reopen ICA proxy and try again. If background startup is selected, check OS background-app permissions."))
     }
 
     async fn decorate(&self, mut status: AppStatus) -> AppStatus {
@@ -364,6 +360,54 @@ impl AppController {
             failures = (failures + 1).min(6);
             tokio::time::sleep(Duration::from_secs(1 << (failures - 1))).await;
         }
+    }
+}
+
+impl worker::Host for AppController {
+    async fn identity(&self) -> Result<worker::Identity, AppError> {
+        let response = tokio::time::timeout(Duration::from_secs(1), ipc::call(Request::Identity))
+            .await
+            .map_err(|_| {
+                AppError::new("worker_unavailable", "The proxy worker did not respond.")
+            })??;
+        if let Response::Identity {
+            fingerprint,
+            managed,
+            foreground,
+            ..
+        } = &response
+        {
+            Ok(worker::Identity {
+                fingerprint: fingerprint.clone(),
+                managed: *managed,
+                foreground: *foreground,
+            })
+        } else {
+            Err(protocol_error())
+        }
+    }
+
+    async fn stop(&self) -> Result<(), AppError> {
+        proxy_service::stop_worker().await
+    }
+
+    async fn launch(&self, state: &str) -> Result<(), AppError> {
+        let state = state.to_owned();
+        *self.foreground_owner.lock().await =
+            blocking(move || startup::launch(&startup::worker_path()?, &state)).await?;
+        Ok(())
+    }
+
+    async fn recover(&self) -> Result<String, AppError> {
+        self.registration(startup::Intent::Recover).await;
+        if let Some(error) = self.startup_error.lock().await.clone() {
+            return Err(error);
+        }
+        Ok(self.startup_state.lock().await.clone())
+    }
+
+    async fn pause(&self, attempt: usize) {
+        tokio::time::sleep(Duration::from_millis(if attempt < 10 { 100 } else { 300 })).await;
     }
 }
 

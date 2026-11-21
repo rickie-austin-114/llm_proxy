@@ -1,6 +1,17 @@
 # Implementation validation
 
-Updated: November 19, 2026. This file separates completed local checks from release acceptance still required on all supported platforms.
+Updated: November 21, 2026. This file separates completed local checks from release acceptance still required on all supported platforms.
+
+## v0.2.4 release preparation — November 21, 2026
+
+- Synchronized npm, Cargo, Tauri, and lockfile versions to 0.2.4, updated installer links, and added release notes for the macOS worker-startup recovery fix. The final code passed the 82 Rust, 11 frontend, and 8 packaging checks recorded below before the version bump. Release checks and installer builds for Apple Silicon Mac, Intel Mac, and Windows x64 run on the release commit in GitHub Actions; final results and installer checksums accompany the GitHub release. Development-preview signing and the remaining native acceptance limitations are unchanged.
+
+## Worker startup recovery — November 20, 2026
+
+- Diagnosed the installed 0.2.3 app against a launchd service still associated with 0.2.1. The installed app passed strict/deep signature verification, but the service repeatedly failed to resolve `Contents/MacOS/llm-proxy-worker` with `EX_CONFIG`, leaving no worker or socket. Saved onboarding was incomplete and an active earlier enrollment marker remained.
+- Added a testable connection controller with bounded identity probes and one automatic macOS recovery attempt per settings session after failed managed startup. Recovery refreshes only existing enabled enrollment, including an interrupted setup that needs its worker to finish onboarding; it does not complete setup or bypass listener-autostart gates. Explicit startup checks also refresh an enabled service with a matching fingerprint. Native registration failures are no longer hidden by stale enabled status, and registration operations are serialized.
+- All **82 release/workspace Rust tests**, **11 frontend tests**, and **8 native packaging regression tests** pass. Regression coverage includes failed native launch and handshake, old-worker/version/mode rejection, foreground ownership, one-attempt recovery across reconnects, native denial and opt-out preservation, reset/fresh/skipped setup, interrupted setup, and unchanged settings during registration repair. The initial restricted full-suite run could not bind test listeners; the suite passes with permission for isolated localhost fixtures. Frontend types (zero errors/warnings), ESLint, formatting, strict release/workspace/all-target Clippy, and the production frontend/native app build pass.
+- Built and verified the complete Apple Silicon app (8.61 MiB), backed up the previously installed app, then installed and reopened the fixed local build. Observed the actual stale service recover from parent bundle 0.2.1 / `EX_CONFIG` to parent bundle 0.2.3 / running, with a new service registration. A read-only IPC identity check confirmed the installed worker SHA-256, managed mode, and non-foreground mode; status remained stopped with onboarding incomplete. The registration marker now matches the installed worker. Pre/post hashes confirm byte-for-byte unchanged settings and public certificate metadata; no credentials or trust were reset and no API requests were sent. Local evidence and the previous app are retained under `artifacts/worker-startup-fix/`. The installed app passes strict/deep signature verification. This is still an ad-hoc signed local build; no release was published, and clean-account/reboot, Intel Mac, Windows, and production-signing acceptance remain separate checks.
 
 ## macOS signing repair — November 19, 2026
 
@@ -84,7 +95,7 @@ The local host runs macOS 27.2 on Apple Silicon. Rust is 1.100.0, Node is 22.18.
 
 ## Remaining verification
 
-- On clean macOS accounts, confirm missing-service repair during first setup and after an app upgrade, denial/approval return, genuine signing/bundle failures, reset/re-enrollment, and actual sign-in/reboot behavior. Automated policy tests and bundle inspection do not prove native ServiceManagement recovery. This repair has not been executed against this user's installed app or startup registration.
+- On clean macOS accounts, confirm missing-service repair during first setup and after an app upgrade, denial/approval return, genuine signing/bundle failures, reset/re-enrollment, and actual sign-in/reboot behavior. Automated policy tests and bundle inspection do not prove native ServiceManagement recovery. The stale enabled-service recovery was verified on this Mac as recorded above; clean-account cases and reboot behavior remain unverified.
 
 - Verify the ICA proxy name and bundled license in Intel Mac and Windows packages. Exercise upgrades from llm_proxy with the changed application/install-directory name, including Windows uninstall/reinstall while retaining saved data and macOS worker registration after removing the old app copy.
 

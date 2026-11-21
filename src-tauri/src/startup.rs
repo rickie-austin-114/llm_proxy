@@ -22,6 +22,7 @@ pub enum Intent {
     Inspect,
     Enroll,
     Repair,
+    Recover,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,17 +177,25 @@ fn initialize_with_service(
     }
     let fingerprint = proxy_service::binary_fingerprint(worker)?;
     let state = service.status()?;
+    // Automatic recovery only refreshes an existing, enabled enrollment. It must
+    // never turn an OS opt-out or a fresh setup into a new registration. An
+    // interrupted setup may already have an enabled service that needs repair
+    // just to reconnect the UI; worker autostart still requires completed setup.
+    if intent == Intent::Recover && (state != ServiceState::Enabled || previous.is_none()) {
+        return state.display();
+    }
     let first_enrollment = previous.is_none()
         || previous
             .as_ref()
             .is_some_and(|registration| registration.reset && intent == Intent::Enroll);
     let repair_missing =
         !setup_pending && state == ServiceState::Missing && intent != Intent::Inspect;
-    let refresh_enabled = !setup_pending
+    let refresh_enabled = (!setup_pending || intent == Intent::Recover)
         && state == ServiceState::Enabled
-        && previous
-            .as_ref()
-            .is_some_and(|registration| registration.fingerprint != fingerprint);
+        && (matches!(intent, Intent::Repair | Intent::Recover)
+            || previous
+                .as_ref()
+                .is_some_and(|registration| registration.fingerprint != fingerprint));
     let register = repair_missing
         || refresh_enabled
         || (!setup_pending && first_enrollment && state == ServiceState::Disabled);
@@ -196,10 +205,21 @@ fn initialize_with_service(
         }
         let registration = service.register(worker);
         let observed = service.status();
-        // A native error can still leave approval pending. Otherwise retain that error,
-        // including its sanitized code, rather than hiding it behind a discovery failure.
+        // A denial can leave approval pending. An old Enabled record, however,
+        // cannot prove that registration of the installed app succeeded.
         match observed {
-            Ok(state) if state.registered() => state,
+            Ok(ServiceState::ApprovalRequired)
+                if registration
+                    .as_ref()
+                    .err()
+                    .is_none_or(|error| error.code == "startup_approval_required") =>
+            {
+                ServiceState::ApprovalRequired
+            }
+            Ok(ServiceState::Enabled) => {
+                registration?;
+                ServiceState::Enabled
+            }
             other => {
                 registration?;
                 let state = other?;
@@ -991,7 +1011,12 @@ mod tests {
             .expect("save preference");
             fixture.marker("previous-enrollment", false);
             fs::remove_file(&fixture.worker).expect("missing bundle worker");
-            for intent in [Intent::Inspect, Intent::Repair, Intent::Enroll] {
+            for intent in [
+                Intent::Inspect,
+                Intent::Repair,
+                Intent::Enroll,
+                Intent::Recover,
+            ] {
                 let service = FakeService::new([]);
                 assert_eq!(
                     fixture.initialize(intent, &service).expect("foreground"),
@@ -1158,20 +1183,151 @@ mod tests {
     }
 
     #[test]
-    fn verified_registration_status_takes_precedence_over_native_error() {
-        for state in [ServiceState::Enabled, ServiceState::ApprovalRequired] {
+    fn native_approval_denial_can_leave_an_authoritative_pending_registration() {
+        let fixture = Fixture::new(true);
+        let mut service = FakeService::new([ServiceState::Missing, ServiceState::ApprovalRequired]);
+        service.registration = Err(AppError::new("startup_approval_required", "native denial"));
+        assert_eq!(
+            fixture
+                .initialize(Intent::Repair, &service)
+                .expect("pending approval"),
+            "approval_required"
+        );
+        service.assert_calls(&["status", "register", "status", "remove_legacy"]);
+        assert!(load(&fixture.directory).expect("read").is_some());
+    }
+
+    #[test]
+    fn stale_registered_status_never_hides_native_registration_failure() {
+        for (state, code) in [
+            (ServiceState::Enabled, "startup_invalid_signature"),
+            (ServiceState::Enabled, "startup_approval_required"),
+            (ServiceState::ApprovalRequired, "startup_invalid_signature"),
+        ] {
             let fixture = Fixture::new(true);
+            fixture.marker("previous-worker", false);
             let mut service = FakeService::new([ServiceState::Missing, state]);
-            service.registration = Err(AppError::new("startup_approval_required", "native denial"));
+            service.registration = Err(AppError::new(code, "native failure"));
             assert_eq!(
                 fixture
                     .initialize(Intent::Repair, &service)
-                    .expect("authoritative status"),
-                state.display().expect("registered state")
+                    .expect_err("registration failed")
+                    .code,
+                code
             );
-            service.assert_calls(&["status", "register", "status", "remove_legacy"]);
-            assert!(load(&fixture.directory).expect("read").is_some());
+            service.assert_calls(&["status", "register", "status"]);
+            assert_eq!(
+                load(&fixture.directory)
+                    .expect("read")
+                    .expect("old marker")
+                    .fingerprint,
+                "previous-worker"
+            );
         }
+    }
+
+    #[test]
+    fn explicit_and_failed_handshake_repairs_refresh_even_a_matching_fingerprint() {
+        for intent in [Intent::Repair, Intent::Recover] {
+            let fixture = Fixture::new(true);
+            fixture.marker(&fixture.fingerprint(), false);
+            let service = FakeService::new([ServiceState::Enabled, ServiceState::Enabled]);
+            assert_eq!(
+                fixture.initialize(intent, &service).expect("refreshed"),
+                "enabled"
+            );
+            service.assert_calls(&[
+                "status",
+                "unregister",
+                "register",
+                "status",
+                "remove_legacy",
+            ]);
+        }
+    }
+
+    #[test]
+    fn interrupted_setup_can_recover_an_already_enabled_worker_without_completing_setup() {
+        let fixture = Fixture::new(false);
+        fixture.marker("previous-worker", false);
+        let settings = fs::read(fixture.directory.join("settings.json")).expect("settings before");
+        let service = FakeService::new([ServiceState::Enabled, ServiceState::Enabled]);
+        assert_eq!(
+            fixture
+                .initialize(Intent::Recover, &service)
+                .expect("existing enrollment refreshed"),
+            "enabled"
+        );
+        service.assert_calls(&[
+            "status",
+            "unregister",
+            "register",
+            "status",
+            "remove_legacy",
+        ]);
+        assert!(proxy_service::onboarding_pending(&fixture.directory).expect("setup still pending"));
+        assert_eq!(
+            fs::read(fixture.directory.join("settings.json")).expect("settings after"),
+            settings
+        );
+    }
+
+    #[test]
+    fn automatic_recovery_never_enrolls_missing_disabled_or_pending_services() {
+        for state in [
+            ServiceState::Disabled,
+            ServiceState::Missing,
+            ServiceState::ApprovalRequired,
+        ] {
+            let fixture = Fixture::new(true);
+            fixture.marker("previous-worker", false);
+            let service = FakeService::new([state]);
+            let _ = fixture.initialize(Intent::Recover, &service);
+            service.assert_calls(&["status"]);
+            assert_eq!(
+                load(&fixture.directory)
+                    .expect("read")
+                    .expect("old marker")
+                    .fingerprint,
+                "previous-worker"
+            );
+        }
+        let fixture = Fixture::new(true);
+        let service = FakeService::new([ServiceState::Enabled]);
+        assert_eq!(
+            fixture
+                .initialize(Intent::Recover, &service)
+                .expect("not enrolled"),
+            "enabled"
+        );
+        service.assert_calls(&["status"]);
+        assert!(load(&fixture.directory).expect("read").is_none());
+    }
+
+    #[test]
+    fn failed_refresh_keeps_the_previous_marker_for_a_later_retry() {
+        let fixture = Fixture::new(true);
+        fixture.marker("previous-worker", false);
+        let mut service = FakeService::new([ServiceState::Enabled]);
+        service.unregistration = Err(AppError::new(
+            "startup_registration_failed",
+            "unregister failed",
+        ));
+        assert_eq!(
+            fixture
+                .initialize(Intent::Recover, &service)
+                .expect_err("unregister denied")
+                .message,
+            "unregister failed"
+        );
+        service.assert_calls(&["status", "unregister"]);
+        assert_eq!(
+            load(&fixture.directory)
+                .expect("read")
+                .expect("old marker")
+                .fingerprint,
+            "previous-worker"
+        );
     }
 
     #[test]
@@ -1220,7 +1376,12 @@ mod tests {
 
     #[test]
     fn existing_os_opt_out_is_preserved_even_after_upgrade_or_explicit_retry() {
-        for intent in [Intent::Inspect, Intent::Repair, Intent::Enroll] {
+        for intent in [
+            Intent::Inspect,
+            Intent::Repair,
+            Intent::Enroll,
+            Intent::Recover,
+        ] {
             let fixture = Fixture::new(true);
             fixture.marker("previous-worker", false);
             let service = FakeService::new([ServiceState::Disabled]);
@@ -1242,7 +1403,7 @@ mod tests {
     #[test]
     fn incomplete_setup_and_reset_prevent_early_repair() {
         for completed in [false, true] {
-            for intent in [Intent::Inspect, Intent::Repair] {
+            for intent in [Intent::Inspect, Intent::Repair, Intent::Recover] {
                 let fixture = Fixture::new(completed);
                 fixture.marker("", true);
                 let service = FakeService::new([]);
@@ -1276,7 +1437,7 @@ mod tests {
 
     #[test]
     fn skipping_the_wizard_does_not_enroll_startup_until_an_explicit_start() {
-        for intent in [Intent::Inspect, Intent::Repair] {
+        for intent in [Intent::Inspect, Intent::Repair, Intent::Recover] {
             let fixture = Fixture::new(false);
             let path = fixture.directory.join("settings.json");
             let mut settings: serde_json::Value =

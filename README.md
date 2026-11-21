@@ -10,17 +10,17 @@
 
 ## Install and configure
 
-The v0.2.3 preview adds **Start without background startup** to the final setup step and fixes the macOS Keychain panel's blue background and text contrast in dark mode. It includes the first-run wizard, optional setup dismissal, background-startup recovery, and verified macOS bundle signing from v0.2.2. The [older Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) includes PowerPoint screenshots, but shows the previous two-button HTTPS setup and tray lifecycle.
+The v0.2.4 preview fixes macOS worker startup when an enabled background service still refers to an older app after an update. It refreshes an existing enabled registration once, verifies the installed worker, and preserves saved settings, keys, certificate trust, and run preferences. It also includes the foreground startup option and blue macOS Keychain guidance panel from v0.2.3. The [older Word installation guide](docs/LLM_Proxy_PowerPoint_Installation_Guide.doc) includes PowerPoint screenshots, but shows the previous two-button HTTPS setup and tray lifecycle.
 
-Download the **ICA proxy v0.2.3 preview** installer for your computer:
+Download the **ICA proxy v0.2.4 preview** installer for your computer:
 
 | Computer                 | Download                                                                                                                            |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.3/ICA-Proxy-0.2.3-macOS-Apple-Silicon.dmg)     |
-| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.3/ICA-Proxy-0.2.3-macOS-Intel.dmg)             |
-| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.3/ICA-Proxy-0.2.3-Windows-x64-Setup.exe) |
+| Mac with Apple Silicon   | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.4/ICA-Proxy-0.2.4-macOS-Apple-Silicon.dmg)     |
+| Mac with Intel processor | [Download DMG](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.4/ICA-Proxy-0.2.4-macOS-Intel.dmg)             |
+| Windows x64              | [Download setup EXE](https://github.com/rickie-austin-114/llm_proxy/releases/download/v0.2.4/ICA-Proxy-0.2.4-Windows-x64-Setup.exe) |
 
-These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.2.3) for limitations and checksums.
+These are development packages: the Mac apps have an ad-hoc signature without Apple notarization, and the Windows installer has no publisher signature. Signed production releases and the platform acceptance checks below are still pending. See the [release notes](https://github.com/rickie-austin-114/llm_proxy/releases/tag/v0.2.4) for limitations and checksums.
 
 The intended graphical installation is:
 
@@ -45,6 +45,8 @@ With background operation selected, close or quit settings to leave the proxy an
 After onboarding, if macOS reports that background startup needs approval, opening settings shows an **Allow background startup** prompt. Select **Open Login Items settings**, enable ICA proxy under **Allow in the Background**, then return and select **Check background startup**. You can choose **Later** and use the buttons under **Background & startup** when ready. The prompt appears at most once per settings session; sign-in still launches only the worker. macOS controls approval, so the app cannot grant it or force a native Allow dialog.
 
 **Check background startup** also retries a failed registration without reopening the app. If macOS cannot find the service, the app validates its bundled files, attempts registration once, and checks the result, even if it was registered previously. During incomplete onboarding, use the final setup step to register/retry. Checks preserve OS-disabled startup and the reset preference. If the proxy is running, the app asks before checking because handing the worker over to the OS can interrupt requests. Installation, missing-service, and signing failures have separate guidance and safe error codes; a signing failure requires a repaired app build, rather than more permission. If registration still fails, share the displayed error code with the app publisher. On Windows, the existing per-user task needs no administrator prompt; managed-device restrictions may require IT assistance.
+
+On macOS, an enabled background service can still refer to an older app after an update. If the installed worker does not respond, ICA proxy makes one automatic attempt per settings session to refresh an existing enabled registration, then verifies the worker's version and run mode. **Check background startup** can also refresh an enabled registration even when its saved version matches. Native signing/approval errors remain visible. Recovery preserves foreground mode, OS-disabled startup, incomplete setup, and reset preferences; it does not delete provider keys, settings, or certificate trust. A failed startup is not a reason to reset app data.
 
 If macOS reports **SMAppService error 3**, quit ICA proxy and replace the entire app in Applications with a newly verified installer from the publisher. Reopen the Applications copy and retry background startup. Resetting settings or granting background permission cannot repair a damaged signature. Keep saved settings during this repair; do not use **Reset data / prepare to uninstall**. Older builds made without an explicit signing identity can contain only an incomplete linker signature. The source now defaults to full ad-hoc development signing and checks packaged app/worker signatures, but a preview's native background-startup compatibility still requires testing.
 

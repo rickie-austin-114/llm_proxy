@@ -3,6 +3,7 @@ mod commands;
 mod desktop;
 mod error;
 mod startup;
+mod worker;
 
 use crate::app::AppController;
 use std::sync::Arc;
